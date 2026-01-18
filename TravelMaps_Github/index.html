@@ -3,77 +3,72 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Didius Travel Map</title>
+<title>Didius Travel Map — Minimal Directions</title>
 
 <!-- Mapbox GL core -->
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet">
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.js"></script>
 
-<!-- Directions plugin -->
+<!-- Directions plugin (official CDN) -->
 <link href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.css" rel="stylesheet">
 <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.js"></script>
 
 <style>
   html,body{height:100%;margin:0;font-family:system-ui,Inter,Arial}
   #map{height:100vh;width:100%}
-  .panel{position:absolute;z-index:2;left:12px;top:12px;background:#fff;padding:8px 10px;border-radius:10px;border:1px solid #e5e7eb;box-shadow:0 6px 20px rgba(0,0,0,.12)}
-  .panel select,.panel input{margin-right:6px}
-  #legend{position:absolute;right:12px;top:12px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.12)}
-  .badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#3730a3}
-  .mapboxgl-ctrl-top-right{margin-top:64px} /* push Directions below our panel a bit */
+  #err{position:absolute;left:12px;bottom:12px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+       padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.12);font-size:12px;max-width:60ch;display:none}
+  .mapboxgl-ctrl-top-right{margin-top:8px}
 </style>
 </head>
 <body>
 
-<div class="panel">
-  <select id="typeFilter"><option value="">All types</option></select>
-  <select id="stateFilter"><option value="">All states</option></select>
-  <input id="tagSearch" placeholder="Filter tags">
-  <span class="badge">Click a marker for details</span>
-</div>
-
-<div id="map" aria-label="Interactive map of your places"></div>
-<div id="legend"></div>
+<div id="map" aria-label="Interactive map"></div>
+<div id="err"></div>
 
 <script>
-// Credentials and style
-mapboxgl.accessToken = 'sk.eyJ1IjoiYnJhZDEzbWFydGluIiwiYSI6ImNta2sxNDJ6MDFkNGMzZG9sN2V6YzMxcW8ifQ.WkxzD74V8LBcxmg8aHv_iw';
+// === Credentials & constants ===
+mapboxgl.accessToken = 'sk.eyJ1IjoiYnJhZDEzbWFydGluIiwiYSI6ImNta2sxNDJ6MDFkNGMzZG9sN2V6YzMxcW8ifQ.WkxzD74V8LBcxmg8aHv_iw';  // <- replace with your updated token
 const STYLE_URL   = 'mapbox://styles/brad13martin/cmkjztnvs001u01qm6lsmeold';
-
-// Dataset
 const TILESET_URL = 'mapbox://brad13martin.c1m5hzkh';
 const SOURCE_LAYER = 'travelmap_geocoded-5lk8ms';
 
-// IDs we add
 const DATA_SOURCE_ID = 'places';
 const DATA_LAYER_ID  = 'places-points';
 
-// Map
+// show any JS error in-page so a blank screen isn't mysterious
+window.addEventListener('error', e => showErr('JS error: ' + (e?.error?.message || e.message)));
+function showErr(msg){ const el = document.getElementById('err'); el.style.display='block'; el.textContent = msg; }
+
+// === Map init ===
 const map = new mapboxgl.Map({
   container: 'map',
   style: STYLE_URL,
   center: [-80, 40],
   zoom: 5
 });
-map.addControl(new mapboxgl.NavigationControl());
-map.scrollZoom.disable();
-map.on('click', () => map.scrollZoom.enable(), { once: true });
 
-// Directions control
+map.addControl(new mapboxgl.NavigationControl());
+
+// Directions UI (uses global mapboxgl accessToken)
 const directions = new MapboxDirections({
   accessToken: mapboxgl.accessToken,
+  profile: 'mapbox/driving',   // change to walking/cycling if you like
   unit: 'imperial',
-  profile: 'mapbox/driving',
   alternatives: true,
   controls: { instructions: false }
 });
 map.addControl(directions, 'top-right');
 
+// surface Mapbox GL internal errors too
+map.on('error', ev => showErr('Mapbox error: ' + (ev?.error?.message || JSON.stringify(ev))));
+
+// === Data layer ===
 map.on('load', () => {
-  // Source
+  // add the vector tileset
   map.addSource(DATA_SOURCE_ID, { type: 'vector', url: TILESET_URL });
 
-  // Layer with color by Type
+  // draw your points (simple, no styling logic yet)
   map.addLayer({
     id: DATA_LAYER_ID,
     type: 'circle',
@@ -81,138 +76,30 @@ map.on('load', () => {
     'source-layer': SOURCE_LAYER,
     paint: {
       'circle-radius': 6,
+      'circle-color': '#2563eb',
       'circle-stroke-color': '#fff',
-      'circle-stroke-width': 1,
-      'circle-color': [
-        'match',
-        ['get', 'Type'],
-        'Restaurant', '#2563eb',
-        'Trail',      '#22c55e',
-        'Lodging',    '#f59e0b',
-        'Attraction', '#ef4444',
-        /* other */   '#94a3b8'
-      ]
+      'circle-stroke-width': 1
     }
   });
 
-  // Build filter dropdowns
-  buildFilters();
-
-  // Fit to data once
-  fitToData();
-
-  // Popups
+  // popups
   map.on('click', DATA_LAYER_ID, e => {
-    const p  = e.features[0].properties || {};
+    const p = e.features[0].properties || {};
     const ll = e.features[0].geometry.coordinates;
-    const safe = k => (p[k] ? String(p[k]) : '');
-
+    const g = k => (p[k] ? String(p[k]) : '');
     const lines = [
-      `<strong>${safe('Name') || 'Place'}</strong>`,
-      safe('Type') && `<div><em>${safe('Type')}</em></div>`,
-      safe('Restaurant Rating') && `Rating: ${safe('Restaurant Rating')}`,
-      safe('Lobster Roll Ranking') && `Lobster Roll Ranking: ${safe('Lobster Roll Ranking')}`,
-      safe('Activity / Accommodations Rating') && `Activity/Accommodations: ${safe('Activity / Accommodations Rating')}`,
-      (safe('Trail Length') || safe('Difficulty') || safe('Est. Time') || safe('Loop')) &&
-        `<div style="margin-top:6px">
-           ${safe('Trail Length') ? `Trail: ${safe('Trail Length')}` : ''} 
-           ${safe('Difficulty') ? ` · ${safe('Difficulty')}` : ''} 
-           ${safe('Est. Time') ? ` · ${safe('Est. Time')}` : ''} 
-           ${safe('Loop') ? ` · Loop: ${safe('Loop')}` : ''}
-         </div>`,
-      (safe('City') || safe('State')) && `${safe('City')}${safe('City')&&safe('State')?', ':''}${safe('State')}`,
-      safe('Tags') && `<div>Tags: ${safe('Tags')}</div>`,
-      safe('Notes') && `<div style="margin-top:6px">${safe('Notes')}</div>`,
-      safe('URL') && `<div style="margin-top:6px"><a href="${safe('URL')}" target="_blank" rel="noopener">Open link</a></div>`
+      `<strong>${g('Name') || 'Place'}</strong>`,
+      g('Type') && `<div><em>${g('Type')}</em></div>`,
+      (g('City') || g('State')) && `${g('City')}${g('City')&&g('State')?', ':''}${g('State')}`,
+      g('Notes') && `<div style="margin-top:6px">${g('Notes')}</div>`,
+      g('URL') && `<div style="margin-top:6px"><a href="${g('URL')}" target="_blank" rel="noopener">Open link</a></div>`
     ].filter(Boolean);
-
     new mapboxgl.Popup().setLngLat(ll).setHTML(lines.join('<br>')).addTo(map);
   });
 
   map.on('mouseenter', DATA_LAYER_ID, () => map.getCanvas().style.cursor = 'pointer');
   map.on('mouseleave', DATA_LAYER_ID, () => map.getCanvas().style.cursor = '');
-
-  // Filters
-  document.getElementById('typeFilter').addEventListener('change', applyFilters);
-  document.getElementById('stateFilter').addEventListener('change', applyFilters);
-  document.getElementById('tagSearch').addEventListener('input', debounce(applyFilters, 250));
-
-  // Legend for Type
-  const legendItems = [
-    ['Restaurant', '#2563eb'],
-    ['Trail',      '#22c55e'],
-    ['Lodging',    '#f59e0b'],
-    ['Attraction', '#ef4444'],
-    ['Other',      '#94a3b8']
-  ];
-  document.getElementById('legend').innerHTML =
-    `<b>Legend</b><br>` +
-    legendItems.map(([label,color]) =>
-      `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${color};margin-right:6px"></span>${label>`
-    ).join('<br>');
 });
-
-// Build filter values from source features
-function buildFilters() {
-  const types = new Set();
-  const states = new Set();
-  let feats = [];
-
-  try {
-    feats = map.querySourceFeatures(DATA_SOURCE_ID, { sourceLayer: SOURCE_LAYER }) || [];
-  } catch (e) {}
-
-  feats.forEach(f => {
-    const p = f.properties || {};
-    if (p['Type'])  types.add(String(p['Type']));
-    if (p['State']) states.add(String(p['State']));
-  });
-
-  const typeSel = document.getElementById('typeFilter');
-  const stateSel = document.getElementById('stateFilter');
-
-  [...types].sort().forEach(v => {
-    const opt = document.createElement('option'); opt.value = v; opt.textContent = v;
-    typeSel.appendChild(opt);
-  });
-  [...states].sort().forEach(v => {
-    const opt = document.createElement('option'); opt.value = v; opt.textContent = v;
-    stateSel.appendChild(opt);
-  });
-}
-
-// Apply filters to layer
-function applyFilters() {
-  const typeVal  = (document.getElementById('typeFilter').value || '').toLowerCase();
-  const stateVal = (document.getElementById('stateFilter').value || '').toLowerCase();
-  const tagVal   = (document.getElementById('tagSearch').value || '').toLowerCase();
-
-  const cond = ['all'];
-  if (typeVal)  cond.push(['==', ['downcase', ['get', 'Type']],  typeVal]);
-  if (stateVal) cond.push(['==', ['downcase', ['get', 'State']], stateVal]);
-  if (tagVal)   cond.push(['in', tagVal, ['downcase', ['get', 'Tags']]]);
-
-  if (map.getLayer(DATA_LAYER_ID)) map.setFilter(DATA_LAYER_ID, cond);
-}
-
-// Fit map to all data once on load
-function fitToData() {
-  const feats = map.querySourceFeatures(DATA_SOURCE_ID, { sourceLayer: SOURCE_LAYER }) || [];
-  if (!feats.length) return;
-  const bbox = feats.reduce((b, f) => {
-    const [x, y] = f.geometry.coordinates;
-    b[0][0] = Math.min(b[0][0], x);
-    b[0][1] = Math.min(b[0][1], y);
-    b[1][0] = Math.max(b[1][0], x);
-    b[1][1] = Math.max(b[1][1], y);
-    return b;
-  }, [[Infinity,Infinity],[-Infinity,-Infinity]]);
-  if (isFinite(bbox[0][0])) map.fitBounds(bbox, { padding: 60, duration: 700 });
-}
-
-// Small debounce helper
-function debounce(fn, ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
 </script>
 </body>
 </html>
-
