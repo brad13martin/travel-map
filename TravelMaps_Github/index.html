@@ -26,78 +26,54 @@
 <div id="map" aria-label="Interactive map of your places"></div>
 
 <script>
-// 1) Your token + style (from your message)
+// Credentials & map config
 mapboxgl.accessToken = 'pk.eyJ1IjoiYnJhZDEzbWFydGluIiwiYSI6ImNta2p6eHI5MzE4YzAzY282aXE4Mjhxc3QifQ.tkosuQGdRkfSMoRVWCakbg';
-const STYLE_URL = 'mapbox://styles/brad13martin/cmkjztnvs001u01qm6lsmeold';
+const STYLE_URL   = 'mapbox://styles/brad13martin/cmkjztnvs001u01qm6lsmeold';
 
-// 2) Spin up the map
+// Your dataset (explicit)
+const TILESET_URL = 'mapbox://brad13martin.c1m5hzkh';
+const SOURCE_LAYER = 'travelmap_geocoded-5lk8ms';
+
+// IDs we add
+const DATA_SOURCE_ID = 'places';
+const DATA_LAYER_ID  = 'places-points';
+
 const map = new mapboxgl.Map({
   container: 'map',
   style: STYLE_URL,
   center: [-80, 40],
   zoom: 5
 });
+
 map.addControl(new mapboxgl.NavigationControl());
 map.scrollZoom.disable();
 map.on('click', () => map.scrollZoom.enable(), { once: true });
 
-// 3) We’ll auto-detect your data layer inside the style
-let TARGET_LAYER_ID = null;     // e.g., 'places-points' inside your style
-let TARGET_SOURCE_ID = null;    // the style's source name for that layer
-let TARGET_SOURCE_LAYER = null; // the vector 'source-layer' (tileset layer name)
-
 map.on('load', () => {
-  // Find the first circle/symbol layer that has features with your expected fields
-  const layers = map.getStyle().layers || [];
-  const candidateLayers = layers.filter(l =>
-    (l.type === 'circle' || l.type === 'symbol') &&
-    l.source &&
-    // either vector with source-layer or geojson source
-    (map.getSource(l.source)?.type === 'vector' || map.getSource(l.source)?.type === 'geojson')
-  );
+  // 1) Add your vector tileset as a source
+  map.addSource(DATA_SOURCE_ID, { type: 'vector', url: TILESET_URL });
 
-  // Try each candidate: if we can read a feature with "Name" or "Lat" property, assume it's your dataset
-  (function pickLayer(i=0) {
-    if (i >= candidateLayers.length) {
-      alert('Could not auto-detect the data layer from the style. If needed, tell me the layer id or tileset, and I’ll hard-wire it.');
-      return;
+  // 2) Add a circle layer from that source
+  map.addLayer({
+    id: DATA_LAYER_ID,
+    type: 'circle',
+    source: DATA_SOURCE_ID,
+    'source-layer': SOURCE_LAYER,
+    paint: {
+      'circle-radius': 6,
+      'circle-color': '#2563eb',
+      'circle-stroke-color': '#fff',
+      'circle-stroke-width': 1
     }
-    const L = candidateLayers[i];
-    try {
-      // Prefer querying source features (works even if not currently visible)
-      const feats = map.querySourceFeatures(L.source, L['source-layer'] ? {sourceLayer: L['source-layer']} : {});
-      const probe = feats.find(f => {
-        const p = f.properties || {};
-        return p['Name'] || p['Lat'] || p['Long'] || p['City'] || p['State'];
-      });
+  });
 
-      if (probe) {
-        TARGET_LAYER_ID = L.id;
-        TARGET_SOURCE_ID = L.source;
-        TARGET_SOURCE_LAYER = L['source-layer'] || null;
-        wireInteractions();
-        buildFilters();
-      } else {
-        pickLayer(i+1);
-      }
-    } catch(e) {
-      // Some sources may not be queryable at this moment; try next
-      pickLayer(i+1);
-    }
-  })();
-});
+  // 3) Build dropdowns from data
+  buildFilters();
 
-// 4) Popups, cursor, and filtering
-function wireInteractions() {
-  // Cursor change
-  map.on('mouseenter', TARGET_LAYER_ID, () => map.getCanvas().style.cursor = 'pointer');
-  map.on('mouseleave', TARGET_LAYER_ID, () => map.getCanvas().style.cursor = '');
-
-  // Popups on click
-  map.on('click', TARGET_LAYER_ID, e => {
+  // 4) Popups (wired to your headers)
+  map.on('click', DATA_LAYER_ID, e => {
     const p = e.features[0].properties || {};
     const ll = e.features[0].geometry.coordinates;
-
     const safe = k => (p[k] ? String(p[k]) : '');
 
     const lines = [
@@ -122,15 +98,16 @@ function wireInteractions() {
     new mapboxgl.Popup().setLngLat(ll).setHTML(lines.join('<br>')).addTo(map);
   });
 
-  // Hook up filter controls
+  map.on('mouseenter', DATA_LAYER_ID, () => map.getCanvas().style.cursor = 'pointer');
+  map.on('mouseleave', DATA_LAYER_ID, () => map.getCanvas().style.cursor = '');
+
+  // 5) Hook up filters
   document.getElementById('typeFilter').addEventListener('change', applyFilters);
   document.getElementById('stateFilter').addEventListener('change', applyFilters);
   document.getElementById('tagSearch').addEventListener('input', debounce(applyFilters, 250));
-}
+});
 
 function applyFilters() {
-  if (!TARGET_LAYER_ID) return;
-
   const typeVal  = (document.getElementById('typeFilter').value || '').toLowerCase();
   const stateVal = (document.getElementById('stateFilter').value || '').toLowerCase();
   const tagVal   = (document.getElementById('tagSearch').value || '').toLowerCase();
@@ -140,40 +117,37 @@ function applyFilters() {
   if (stateVal) conditions.push(['==', ['downcase', ['get', 'State']], stateVal]);
   if (tagVal)   conditions.push(['in', tagVal, ['downcase', ['get', 'Tags']]]);
 
-  map.setFilter(TARGET_LAYER_ID, conditions);
+  if (map.getLayer(DATA_LAYER_ID)) map.setFilter(DATA_LAYER_ID, conditions);
 }
 
 function buildFilters() {
-  if (!TARGET_SOURCE_ID) return;
-
-  const typeSet = new Set();
-  const stateSet = new Set();
+  const types = new Set();
+  const states = new Set();
 
   let feats = [];
   try {
-    feats = map.querySourceFeatures(TARGET_SOURCE_ID, TARGET_SOURCE_LAYER ? {sourceLayer: TARGET_SOURCE_LAYER} : {});
+    feats = map.querySourceFeatures(DATA_SOURCE_ID, { sourceLayer: SOURCE_LAYER }) || [];
   } catch (e) {}
 
   feats.forEach(f => {
     const p = f.properties || {};
-    if (p['Type'])  typeSet.add(String(p['Type']));
-    if (p['State']) stateSet.add(String(p['State']));
+    if (p['Type'])  types.add(String(p['Type']));
+    if (p['State']) states.add(String(p['State']));
   });
 
   const typeSel = document.getElementById('typeFilter');
   const stateSel = document.getElementById('stateFilter');
 
-  [...typeSet].sort().forEach(v => {
+  [...types].sort().forEach(v => {
     const opt = document.createElement('option'); opt.value = v; opt.textContent = v;
     typeSel.appendChild(opt);
   });
-  [...stateSet].sort().forEach(v => {
+  [...states].sort().forEach(v => {
     const opt = document.createElement('option'); opt.value = v; opt.textContent = v;
     stateSel.appendChild(opt);
   });
 }
 
-// tiny debounce helper
 function debounce(fn, ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
 </script>
 </body>
