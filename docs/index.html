@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Didius Travel Map — Inputs-only Directions + Calm Camera + Route Filter</title>
+<title>Didius Travel Map — Robust Points + Inputs-only Directions</title>
 
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet">
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.js"></script>
@@ -56,10 +56,10 @@
 <script>
 // ====== CONFIG ======
 mapboxgl.accessToken = 'pk.eyJ1IjoiYnJhZDEzbWFydGluIiwiYSI6ImNta2p6eHI5MzE4YzAzY282aXE4Mjhxc3QifQ.tkosuQGdRkfSMoRVWCakbg';
-
 const STYLE_URL = 'mapbox://styles/brad13martin/cmkjztnvs001u01qm6lsmeold';
-// IMPORTANT: index.html is in /docs and GeoJSON is in sibling /data
-const GEO_PATH  = '../data/places.geojson';
+
+// index.html is in /docs and GeoJSON is under /docs/data
+const GEO_PATH  = 'data/places.geojson';
 
 const GEO_SOURCE_ID = 'places-geo';
 const GEO_LAYER_ID  = 'places-geo-points';
@@ -86,7 +86,7 @@ function clearErr(){ errBox.style.display='none'; errBox.textContent=''; }
 let routeReady = false;
 function setApplyEnabled(on){ routeReady = !!on; applyBtn.disabled = !on; }
 
-// Track user interactions to avoid refitting while they’re moving the map
+// Track user interactions to avoid refitting while they move the map
 let userInteracting = false;
 let hasFitOnce = false;
 
@@ -120,7 +120,7 @@ const directions = new MapboxDirections({
 });
 map.addControl(directions, 'top-right');
 
-// Safety net: if the plugin ever enters "placing" mode, block the map click from propagating.
+// Safety net: if the plugin ever enters placing mode, block map click from propagating
 map.on('click', (e) => {
   const box = document.querySelector('.mapboxgl-ctrl-directions');
   const placing = box && (box.classList.contains('is-placing') || box.classList.contains('directions-placing'));
@@ -141,7 +141,7 @@ directions.on('route', e => {
       currentRouteLine = null;
     }
     setApplyEnabled(!!currentRouteLine?.coordinates?.length);
-    // don't auto-apply; user clicks Apply
+    // do not auto-apply
     hasFitOnce = false;
   } catch { currentRouteLine = null; setApplyEnabled(false); }
 });
@@ -169,41 +169,72 @@ map.on('sourcedata', e => {
   if (e.sourceId !== 'directions' || !map.isSourceLoaded('directions')) return;
   const line = getActiveRouteLine();
   setApplyEnabled(!!line?.coordinates?.length);
-  // don't auto-apply
+  // do not auto-apply
 });
 
 // ====== LOAD LAYERS ======
 map.on('load', async () => {
-  // Isochrone shells (corridor color here)
+  // Isochrone shells
   map.addSource(ISO_SOURCE_ID, { type: 'geojson', data: { type:'FeatureCollection', features: [] } });
   map.addLayer({ id: ISO_LAYER_FILL, type: 'fill', source: ISO_SOURCE_ID,
-    paint: { 'fill-color': '#7c3aed', 'fill-opacity': 0.18 } }); // violet fill
+    paint: { 'fill-color': '#7c3aed', 'fill-opacity': 0.18 } });
   map.addLayer({ id: ISO_LAYER_LINE, type: 'line', source: ISO_SOURCE_ID,
-    paint: { 'line-color': '#5b21b6', 'line-width': 2.5, 'line-opacity': 0.9 } }); // violet outline
+    paint: { 'line-color': '#5b21b6', 'line-width': 2.5, 'line-opacity': 0.9 } });
 
-  // Keep corridor under points (optional; if you want it above, remove these)
+  // Keep corridor under points
   map.moveLayer(ISO_LAYER_FILL);
   map.moveLayer(ISO_LAYER_LINE);
 
-  // GeoJSON points
+  // GeoJSON points with robust normalization
   try {
     console.log('Fetching GeoJSON from:', GEO_PATH);
     const resp = await fetch(GEO_PATH, { cache: 'no-store' });
     console.log('GeoJSON HTTP status:', resp.status);
     if (!resp.ok) throw new Error(`Fetch failed: ${resp.status} ${resp.statusText}`);
-    const gj = await resp.json();
+    const raw = await resp.json();
 
-    if (gj.type !== 'FeatureCollection' || !Array.isArray(gj.features)) {
-      throw new Error('Invalid GeoJSON: expected FeatureCollection with features array.');
+    let feats = [];
+    if (raw && raw.type === 'FeatureCollection' && Array.isArray(raw.features)) {
+      console.log(`Loaded ${raw.features.length} raw features`);
+      feats = raw.features;
+    } else if (Array.isArray(raw)) {
+      console.warn('Top-level is an array, wrapping as FeatureCollection');
+      feats = raw;
+    } else {
+      throw new Error('Unrecognized data format. Expected FeatureCollection or array of features.');
     }
 
-    // Light validation to catch lat/lon reversal quickly
-    const firstPoint = gj.features.find(f => f.geometry && f.geometry.type === 'Point');
-    if (!firstPoint) {
-      console.warn('No Point features found in GeoJSON. Are your features Points?');
-    } else if (!Array.isArray(firstPoint.geometry.coordinates) || firstPoint.geometry.coordinates.length < 2) {
-      console.warn('Point feature has invalid coordinates.');
+    // Normalize to true Point features with numeric [lng, lat]
+    const norm = [];
+    for (const f of feats) {
+      let props = f.properties || {};
+      // Use Point geometry if valid
+      if (f.geometry && f.geometry.type === 'Point' && Array.isArray(f.geometry.coordinates)) {
+        let [x, y] = f.geometry.coordinates;
+        x = Number(x); y = Number(y);
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+          if (Math.abs(x) <= 90 && Math.abs(y) > 90) [x, y] = [y, x];
+          norm.push({ type:'Feature', geometry:{ type:'Point', coordinates:[x, y] }, properties: props });
+          continue;
+        }
+      }
+      // Build from Lat/Long properties if present
+      const lat = Number(props.Lat ?? props.lat ?? props.latitude ?? props.Latitude);
+      const lon = Number(props.Long ?? props.long ?? props.lng ?? props.Lng ?? props.longitude ?? props.Longitude);
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        let x = lon, y = lat;
+        if (Math.abs(x) <= 90 && Math.abs(y) > 90) [x, y] = [y, x];
+        norm.push({ type:'Feature', geometry:{ type:'Point', coordinates:[x, y] }, properties: props });
+      }
     }
+
+    if (!norm.length) {
+      console.error('No valid points after normalization. First few raw features:', feats.slice(0,3));
+      throw new Error('No valid point features found. Check coordinates are numbers in [lon, lat] or that Lat and Long properties exist.');
+    }
+
+    const gj = { type:'FeatureCollection', features: norm };
+    console.log(`Normalized to ${gj.features.length} Point features`);
 
     map.addSource(GEO_SOURCE_ID, { type: 'geojson', data: gj });
     map.addLayer({
@@ -216,7 +247,14 @@ map.on('load', async () => {
         'circle-opacity': 1
       }
     });
-    console.log(`Loaded ${gj.features.length} features from ${GEO_PATH}`);
+
+    // Fit to points once so they are visible initially
+    try {
+      const b = turf.bbox(gj);
+      if (b && isFinite(b[0]) && isFinite(b[2]) && b[0] !== b[2] && b[1] !== b[3]) {
+        map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 60, duration: 600 });
+      }
+    } catch {}
 
     // Popups
     map.on('click', GEO_LAYER_ID, e => {
@@ -247,7 +285,7 @@ map.on('load', async () => {
     map.on('moveend', updateVisibleCount);
 
   } catch (e) {
-    showErr('Could not load ../data/places.geojson. Make sure it exists relative to /docs/index.html (and that the path/casing match).');
+    showErr('Could not load data/places.geojson or parse points. Open console for details.');
     console.error(e);
   }
 });
@@ -267,7 +305,7 @@ async function fetchIso(lng, lat, minutes, profile){
 
 async function buildRouteCorridor(line, minutes, profile){
   if (!line?.coordinates || line.coordinates.length < 2) {
-    throw new Error('No route geometry yet. Enter start & destination and wait for the blue route line.');
+    throw new Error('No route geometry yet. Enter start and destination, then wait for the blue route line.');
   }
   const lineKm = turf.length(line, { units:'kilometers' });
   if (!isFinite(lineKm) || lineKm <= 0) throw new Error('Route length is zero.');
@@ -321,11 +359,11 @@ function applyIsoFilter(featureOrNull){
   updateVisibleCount();
 }
 
-// Shared function used by both route event and Apply button
+// ====== APPLY ======
 async function applyIsoFromCurrentControls() {
   clearErr();
   const line = getActiveRouteLine();
-  if (!line) throw new Error('No route yet. Enter start & destination and wait for the blue route line.');
+  if (!line) throw new Error('No route yet. Enter start and destination, then wait for the blue route line.');
   const minutes = Number(minsInput.value || 15);
   const mode = (document.querySelector('input[name="mode"]:checked')?.value || 'driving');
 
