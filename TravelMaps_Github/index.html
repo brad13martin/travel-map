@@ -3,14 +3,17 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Didius Travel Map — Route-wide Minutes Filter (GeoJSON points)</title>
+<title>Didius Travel Map — Route-wide Minutes Filter (GeoJSON)</title>
 
+<!-- Mapbox GL core -->
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet">
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.js"></script>
 
+<!-- Directions plugin -->
 <link href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.css" rel="stylesheet">
 <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.js"></script>
 
+<!-- Turf.js for geometry ops -->
 <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 
 <style>
@@ -28,6 +31,7 @@
 </head>
 <body>
 
+<!-- Controls -->
 <div class="panel">
   <span class="pill" style="background:#fff">Within 
     <input id="mins" type="range" min="5" max="60" step="5" value="15" />
@@ -54,13 +58,10 @@ mapboxgl.accessToken = 'pk.eyJ1IjoiYnJhZDEzbWFydGluIiwiYSI6ImNta2p6eHI5MzE4YzAzY
 
 const STYLE_URL   = 'mapbox://styles/brad13martin/cmkjztnvs001u01qm6lsmeold';
 
-// Your tileset (fallback)
-const TILESET_URL = 'mapbox://brad13martin.c1m5hzkh';
-const SOURCE_LAYER = 'travelmap_geocoded-5lk8ms';
+// Data file (must exist at /data/places.geojson)
+const GEO_PATH     = 'data/places.geojson';
 
 // IDs
-const VEC_SOURCE_ID = 'places-vt';
-const VEC_LAYER_ID  = 'places-vt-points';
 const GEO_SOURCE_ID = 'places-geo';
 const GEO_LAYER_ID  = 'places-geo-points';
 const ISO_SOURCE_ID = 'iso-source';
@@ -70,6 +71,7 @@ const ISO_LAYER_LINE = 'iso-line';
 const MAX_SAMPLES = 12;
 const AVG_SPEED_KMH = { driving: 65, walking: 5, cycling: 18 };
 
+// ====== UI refs ======
 const minsInput = document.getElementById('mins');
 const minsVal   = document.getElementById('minsVal');
 const applyBtn  = document.getElementById('applyIso');
@@ -80,6 +82,7 @@ minsInput.addEventListener('input', () => minsVal.textContent = minsInput.value)
 function showErr(msg){ errBox.style.display='block'; errBox.textContent = msg; }
 function clearErr(){ errBox.style.display='none'; errBox.textContent=''; }
 
+// ====== MAP & DIRECTIONS ======
 const map = new mapboxgl.Map({
   container: 'map',
   style: STYLE_URL,
@@ -100,6 +103,8 @@ const directions = new MapboxDirections({
 map.addControl(directions, 'top-right');
 
 let currentRouteLine = null;
+
+// Store route normally…
 directions.on('route', e => {
   try {
     const r = e?.route?.[0];
@@ -110,9 +115,25 @@ directions.on('route', e => {
     } else {
       currentRouteLine = null;
     }
+    // …and stash a copy on the instructions node for a fallback read
+    const el = document.querySelector('.mapbox-directions-instructions, .directions-control-instructions');
+    if (el) el.__results = [{ route: r }];
   } catch { currentRouteLine = null; }
 });
 
+// Robust getter: use our stored geometry or peek at Directions' hidden state
+function getActiveRouteLine() {
+  if (currentRouteLine?.coordinates?.length) return currentRouteLine;
+  try {
+    const el = document.querySelector('.mapbox-directions-instructions, .directions-control-instructions');
+    if (el && el.__results && el.__results[0]?.route?.geometry?.coordinates) {
+      return { type: 'LineString', coordinates: el.__results[0].route.geometry.coordinates };
+    }
+  } catch {}
+  return null;
+}
+
+// ====== LOAD LAYERS ======
 map.on('load', async () => {
   // Isochrone shells
   map.addSource(ISO_SOURCE_ID, { type: 'geojson', data: { type:'FeatureCollection', features: [] } });
@@ -121,12 +142,12 @@ map.on('load', async () => {
   map.addLayer({ id: ISO_LAYER_LINE, type: 'line', source: ISO_SOURCE_ID,
     paint: { 'line-color': '#10b981', 'line-width': 2, 'line-opacity': 0.8 } });
 
-  // Try to load GeoJSON points
-  let usingGeo = false;
+  // GeoJSON points
   try {
-    const resp = await fetch('data/places.geojson', { cache: 'no-store' });
-    if (!resp.ok) throw new Error('No local GeoJSON found');
+    const resp = await fetch(GEO_PATH, { cache: 'no-store' });
+    if (!resp.ok) throw new Error(`Fetch failed: ${resp.status}`);
     const gj = await resp.json();
+
     map.addSource(GEO_SOURCE_ID, { type: 'geojson', data: gj });
     map.addLayer({
       id: GEO_LAYER_ID, type: 'circle', source: GEO_SOURCE_ID,
@@ -138,54 +159,40 @@ map.on('load', async () => {
         'circle-opacity': 1
       }
     });
-    usingGeo = true;
-    console.log('Using GeoJSON points from data/places.geojson');
-  } catch (e) {
-    console.warn('Falling back to vector tiles for points:', e.message || e);
-    // Vector fallback
-    map.addSource(VEC_SOURCE_ID, { type: 'vector', url: TILESET_URL });
-    map.addLayer({
-      id: VEC_LAYER_ID,
-      type: 'circle',
-      source: VEC_SOURCE_ID,
-      'source-layer': SOURCE_LAYER,
-      paint: {
-        'circle-radius': 6,
-        'circle-color': '#2563eb',
-        'circle-stroke-color': '#fff',
-        'circle-stroke-width': 1,
-        'circle-opacity': 1
-      }
+    console.log('Using GeoJSON points from', GEO_PATH);
+
+    // Popup
+    map.on('click', GEO_LAYER_ID, e => {
+      const p = e.features[0].properties || {};
+      const ll = e.features[0].geometry.coordinates;
+      const g = k => (p[k] ? String(p[k]) : '');
+      const lines = [
+        `<strong>${g('Name') || 'Place'}</strong>`,
+        g('Type') && `<div><em>${g('Type')}</em></div>`,
+        (g('City') || g('State')) && `${g('City')}${g('City')&&g('State')?', ':''}${g('State')}`,
+        g('Notes') && `<div style="margin-top:6px">${g('Notes')}</div>`,
+        g('URL') && `<div style="margin-top:6px"><a href="${g('URL')}" target="_blank" rel="noopener">Open link</a></div>`
+      ].filter(Boolean);
+      new mapboxgl.Popup().setLngLat(ll).setHTML(lines.join('<br>')).addTo(map);
     });
-    showErr('Tip: Add data/places.geojson for precise “within X minutes” filtering. Vector-tile fallback may not filter as expected.');
+    map.on('mouseenter', GEO_LAYER_ID, () => map.getCanvas().style.cursor = 'pointer');
+    map.on('mouseleave', GEO_LAYER_ID, () => map.getCanvas().style.cursor = '');
+
+    // Legend
+    document.getElementById('legend').innerHTML = `
+      <b>Legend</b><br>
+      <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2563eb;margin-right:6px"></span>Place<br>
+      <span style="display:inline-block;width:10px;height:10px;background:#10b981;margin-right:6px"></span>Reachable area
+    `;
+
+    // Init count + on move
+    updateVisibleCount();
+    map.on('moveend', updateVisibleCount);
+
+  } catch (e) {
+    showErr('Could not load data/places.geojson. Ensure the file exists at that path.');
+    console.error(e);
   }
-
-  // Popup for whichever layer exists
-  const ptsLayer = usingGeo ? GEO_LAYER_ID : VEC_LAYER_ID;
-  map.on('click', ptsLayer, e => {
-    const p = e.features[0].properties || {};
-    const ll = e.features[0].geometry.coordinates;
-    const g = k => (p[k] ? String(p[k]) : '');
-    const lines = [
-      `<strong>${g('Name') || 'Place'}</strong>`,
-      g('Type') && `<div><em>${g('Type')}</em></div>`,
-      (g('City') || g('State')) && `${g('City')}${g('City')&&g('State')?', ':''}${g('State')}`,
-      g('Notes') && `<div style="margin-top:6px">${g('Notes')}</div>`,
-      g('URL') && `<div style="margin-top:6px"><a href="${g('URL')}" target="_blank" rel="noopener">Open link</a></div>`
-    ].filter(Boolean);
-    new mapboxgl.Popup().setLngLat(ll).setHTML(lines.join('<br>')).addTo(map);
-  });
-  map.on('mouseenter', ptsLayer, () => map.getCanvas().style.cursor = 'pointer');
-  map.on('mouseleave', ptsLayer, () => map.getCanvas().style.cursor = '');
-
-  document.getElementById('legend').innerHTML = `
-    <b>Legend</b><br>
-    <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2563eb;margin-right:6px"></span>Place<br>
-    <span style="display:inline-block;width:10px;height:10px;background:#10b981;margin-right:6px"></span>Reachable area
-  `;
-
-  // Filtering hooks
-  setupFiltering(usingGeo);
 });
 
 // ====== ISOCHRONE HELPERS ======
@@ -203,7 +210,7 @@ async function fetchIso(lng, lat, minutes, profile){
 
 async function buildRouteCorridor(line, minutes, profile){
   if (!line?.coordinates || line.coordinates.length < 2) {
-    throw new Error('No route geometry yet. Set start and destination.');
+    throw new Error('No route geometry yet. Set start and destination, wait for the blue line, then click Apply.');
   }
   const lineKm = turf.length(line, { units:'kilometers' });
   if (!isFinite(lineKm) || lineKm <= 0) throw new Error('Route length is zero.');
@@ -231,73 +238,67 @@ async function buildRouteCorridor(line, minutes, profile){
       : feat.geometry;
   }
   if (!unionGeom) throw new Error('Failed to build isochrone corridor.');
-  return unionGeom;
+  return unionGeom; // Polygon or MultiPolygon
 }
 
 // ====== FILTERING ======
 let currentIsoFeature = null;
 
-function setupFiltering(usingGeo){
-  const ptsLayer = usingGeo ? GEO_LAYER_ID : VEC_LAYER_ID;
+function updateVisibleCount(){
+  try {
+    const vis = map.queryRenderedFeatures({ layers:[GEO_LAYER_ID] }).length;
+    visOut.textContent = String(vis);
+  } catch { visOut.textContent = 'n/a'; }
+}
 
-  function updateVisibleCount(){
-    try {
-      const vis = map.queryRenderedFeatures({ layers:[ptsLayer] }).length;
-      visOut.textContent = String(vis);
-    } catch { visOut.textContent = 'n/a'; }
+function applyIsoFilter(featureOrNull){
+  if (!map.getLayer(GEO_LAYER_ID)) return;
+
+  if (featureOrNull) {
+    const lit = ['literal', featureOrNull];
+    map.setFilter(GEO_LAYER_ID, ['all', ['within', lit]]);
+    map.setPaintProperty(GEO_LAYER_ID, 'circle-opacity', ['case', ['within', lit], 1, 0]);
+  } else {
+    map.setFilter(GEO_LAYER_ID, null);
+    map.setPaintProperty(GEO_LAYER_ID, 'circle-opacity', 1);
   }
-  map.on('moveend', updateVisibleCount);
-
-  function applyIsoFilter(featureOrNull){
-    if (!map.getLayer(ptsLayer)) return;
-
-    if (featureOrNull) {
-      const lit = ['literal', featureOrNull];
-
-      // Filter and opacity gate
-      map.setFilter(ptsLayer, ['all', ['within', lit]]);
-      map.setPaintProperty(ptsLayer, 'circle-opacity', ['case', ['within', lit], 1, 0]);
-    } else {
-      map.setFilter(ptsLayer, null);
-      map.setPaintProperty(ptsLayer, 'circle-opacity', 1);
-    }
-    updateVisibleCount();
-  }
-
-  // Buttons
-  applyBtn.addEventListener('click', async () => {
-    clearErr();
-    try {
-      if (!currentRouteLine) throw new Error('No route yet. Set a start and destination.');
-      const minutes = Number(minsInput.value || 15);
-      const mode = (document.querySelector('input[name="mode"]:checked')?.value || 'driving');
-
-      const corridorGeom = await buildRouteCorridor(currentRouteLine, minutes, mode);
-      currentIsoFeature = { type:'Feature', geometry:corridorGeom, properties:{} };
-
-      map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features:[ currentIsoFeature ] });
-      applyIsoFilter(currentIsoFeature);
-
-      const bbox = turf.bbox(currentIsoFeature);
-      if (bbox && isFinite(bbox[0])) {
-        map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 50, duration: 700 });
-      }
-    } catch (e) {
-      showErr(e.message || String(e));
-      console.error(e);
-    }
-  });
-
-  clearBtn.addEventListener('click', () => {
-    clearErr();
-    currentIsoFeature = null;
-    map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features: [] });
-    applyIsoFilter(null);
-  });
-
-  // Initial count
   updateVisibleCount();
 }
+
+// ====== BUTTONS ======
+applyBtn.addEventListener('click', async () => {
+  clearErr();
+  try {
+    const line = getActiveRouteLine();
+    if (!line) throw new Error('No route yet. Set a start and destination, wait for the blue line, then click Apply.');
+
+    const minutes = Number(minsInput.value || 15);
+    const mode = (document.querySelector('input[name="mode"]:checked')?.value || 'driving');
+
+    const corridorGeom = await buildRouteCorridor(line, minutes, mode);
+    currentIsoFeature = { type:'Feature', geometry:corridorGeom, properties:{} };
+
+    map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features:[ currentIsoFeature ] });
+    applyIsoFilter(currentIsoFeature);
+
+    const bbox = turf.bbox(currentIsoFeature);
+    if (bbox && isFinite(bbox[0])) {
+      map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 50, duration: 700 });
+    }
+  } catch (e) {
+    showErr(e.message || String(e));
+    console.error(e);
+  }
+});
+
+clearBtn.addEventListener('click', () => {
+  clearErr();
+  currentIsoFeature = null;
+  if (map.getSource(ISO_SOURCE_ID)) {
+    map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features: [] });
+  }
+  applyIsoFilter(null);
+});
 </script>
 </body>
 </html>
