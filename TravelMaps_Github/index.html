@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Didius Travel Map — Isochrone Filter</title>
+<title>Didius Travel Map — Route-wide Minutes Filter</title>
 
 <!-- Mapbox GL core -->
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet">
@@ -13,6 +13,9 @@
 <link href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.css" rel="stylesheet">
 <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.js"></script>
 
+<!-- Turf.js for geometry ops -->
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+
 <style>
   html,body{height:100%;margin:0;font-family:system-ui,Inter,Arial}
   #map{height:100vh;width:100%}
@@ -21,7 +24,7 @@
   .panel input[type="range"]{width:160px}
   .pill{border:1px solid #e5e7eb;border-radius:999px;padding:4px 10px;font-size:12px;background:#f8fafc}
   #legend{position:absolute;right:12px;top:12px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.12);z-index:2}
-  #err{position:absolute;left:12px;bottom:12px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.12);font-size:12px;max-width:60ch;display:none;z-index:4}
+  #err{position:absolute;left:12px;bottom:12px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.12);font-size:12px;max-width:70ch;display:none;z-index:4;white-space:pre-wrap}
   .mapboxgl-ctrl-top-right{margin-top:8px}
 </style>
 </head>
@@ -29,16 +32,17 @@
 
 <!-- Controls -->
 <div class="panel">
-  <span class="pill">Filter: within 
+  <span class="pill">Within 
     <input id="mins" type="range" min="5" max="60" step="5" value="15" />
     <strong><span id="minsVal">15</span> min</strong>
   </span>
   <span class="pill">
-    From:
-    <label><input type="radio" name="fromWhere" value="start" checked> Start</label>
-    <label><input type="radio" name="fromWhere" value="end"> End</label>
+    Mode:
+    <label><input type="radio" name="mode" value="driving" checked> Driving</label>
+    <label><input type="radio" name="mode" value="walking"> Walking</label>
+    <label><input type="radio" name="mode" value="cycling"> Cycling</label>
   </span>
-  <button id="applyIso" class="pill" style="cursor:pointer">Apply</button>
+  <button id="applyIso" class="pill" style="cursor:pointer">Apply to route</button>
   <button id="clearIso" class="pill" style="cursor:pointer">Clear</button>
 </div>
 
@@ -60,16 +64,21 @@ const ISO_SOURCE_ID  = 'iso-source';
 const ISO_LAYER_FILL = 'iso-fill';
 const ISO_LAYER_LINE = 'iso-line';
 
-// ====== BASIC UI HOOKS ======
+const MAX_SAMPLES = 12;     // cap Isochrone calls per route
+const AVG_SPEED_KMH = {     // rough averages for spacing
+  driving: 65,  // ≈ 40 mph
+  walking: 5,
+  cycling: 18
+};
+
+// ====== UI hooks ======
 const minsInput = document.getElementById('mins');
 const minsVal   = document.getElementById('minsVal');
 const applyBtn  = document.getElementById('applyIso');
 const clearBtn  = document.getElementById('clearIso');
 const errBox    = document.getElementById('err');
-
 minsInput.addEventListener('input', () => minsVal.textContent = minsInput.value);
 
-// Show errors inline
 function showErr(msg){ errBox.style.display='block'; errBox.textContent = msg; }
 function clearErr(){ errBox.style.display='none'; errBox.textContent=''; }
 
@@ -83,19 +92,34 @@ const map = new mapboxgl.Map({
 map.addControl(new mapboxgl.NavigationControl());
 map.on('error', ev => showErr('Mapbox: ' + (ev?.error?.message || JSON.stringify(ev))));
 
-// Directions UI
 const directions = new MapboxDirections({
   accessToken: mapboxgl.accessToken,
   profile: 'mapbox/driving',
   unit: 'imperial',
   alternatives: true,
-  controls: { instructions: false }
+  controls: { instructions: false },
+  geometries: 'geojson'  // important: we need a LineString back
 });
 map.addControl(directions, 'top-right');
 
+let currentRouteLine = null;
+directions.on('route', e => {
+  // store the first route's geometry as a Turf LineString
+  try {
+    const r = e?.route?.[0];
+    if (r && r.geometry && r.geometry.type === 'LineString') {
+      currentRouteLine = r.geometry;
+    } else if (r && r.geometry && r.geometry.coordinates) {
+      currentRouteLine = { type:'LineString', coordinates: r.geometry.coordinates };
+    } else {
+      currentRouteLine = null;
+    }
+  } catch { currentRouteLine = null; }
+});
+
 // ====== LAYERS ======
 map.on('load', () => {
-  // Points source/layer
+  // Points
   map.addSource(DATA_SOURCE_ID, { type: 'vector', url: TILESET_URL });
   map.addLayer({
     id: DATA_LAYER_ID,
@@ -110,22 +134,13 @@ map.on('load', () => {
     }
   });
 
-  // Isochrone source & layers (empty until applied)
+  // Isochrone shells
   map.addSource(ISO_SOURCE_ID, { type: 'geojson', data: { type:'FeatureCollection', features: [] } });
-  map.addLayer({
-    id: ISO_LAYER_FILL,
-    type: 'fill',
-    source: ISO_SOURCE_ID,
-    paint: { 'fill-color': '#10b981', 'fill-opacity': 0.12 }
-  });
-  map.addLayer({
-    id: ISO_LAYER_LINE,
-    type: 'line',
-    source: ISO_SOURCE_ID,
-    paint: { 'line-color': '#10b981', 'line-width': 2, 'line-opacity': 0.8 }
-  });
+  map.addLayer({ id: ISO_LAYER_FILL, type: 'fill', source: ISO_SOURCE_ID,
+    paint: { 'fill-color': '#10b981', 'fill-opacity': 0.12 } });
+  map.addLayer({ id: ISO_LAYER_LINE, type: 'line', source: ISO_SOURCE_ID,
+    paint: { 'line-color': '#10b981', 'line-width': 2, 'line-opacity': 0.8 } });
 
-  // Simple legend
   document.getElementById('legend').innerHTML = `
     <b>Legend</b><br>
     <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2563eb;margin-right:6px"></span>Place<br>
@@ -133,81 +148,14 @@ map.on('load', () => {
   `;
 });
 
-// ====== ISOCHRONE LOGIC ======
-let currentIsoGeometry = null;
-
-// Get start or end coordinates from Directions control
-function getCoord(which='start'){
-  const f = which === 'end' ? directions.getDestination() : directions.getOrigin();
-  if (!f || !f.geometry || !f.geometry.coordinates) return null;
-  return f.geometry.coordinates; // [lng, lat]
-}
-
-// Fetch Isochrone polygon from Mapbox Isochrone API
-async function fetchIsochrone(lng, lat, minutes, profile='driving'){
+// ====== ISOCHRONE HELPERS ======
+async function fetchIso(lng, lat, minutes, profile){
   const url = new URL(`https://api.mapbox.com/isochrone/v1/mapbox/${profile}/${lng},${lat}`);
   url.searchParams.set('contours_minutes', String(minutes));
   url.searchParams.set('polygons', 'true');
   url.searchParams.set('denoise', '1');
   url.searchParams.set('generalize', '10');
   url.searchParams.set('access_token', mapboxgl.accessToken);
-
   const res = await fetch(url.toString());
-  if (!res.ok) {
-    const txt = await res.text().catch(()=>res.statusText);
-    throw new Error(`Isochrone ${res.status}: ${txt}`);
-  }
-  return await res.json();
-}
-
-// Apply the filter: only show points within the isochrone polygon
-function applyIsoFilter(){
-  const cond = ['all'];
-  if (currentIsoGeometry) cond.push(['within', currentIsoGeometry]);
-  if (map.getLayer(DATA_LAYER_ID)) map.setFilter(DATA_LAYER_ID, cond);
-}
-
-// Wire buttons
-applyBtn.addEventListener('click', async () => {
-  clearErr();
-  try {
-    const fromWhere = document.querySelector('input[name="fromWhere"]:checked')?.value || 'start';
-    const coord = getCoord(fromWhere);
-    if (!coord) {
-      showErr(`Set a ${fromWhere} location in the Directions box first.`);
-      return;
-    }
-    const minutes = Number(minsInput.value || 15);
-
-    const iso = await fetchIsochrone(coord[0], coord[1], minutes, 'driving');
-
-    // Update source
-    map.getSource(ISO_SOURCE_ID).setData(iso);
-
-    // Save geometry for filter (use first polygon)
-    const feat = (iso.features && iso.features[0]) || null;
-    currentIsoGeometry = feat ? feat.geometry : null;
-
-    // Fit to isochrone if bbox exists
-    if (feat && feat.bbox) {
-      map.fitBounds([[feat.bbox[0], feat.bbox[1]],[feat.bbox[2], feat.bbox[3]]], { padding: 50, duration: 700 });
-    }
-
-    // Apply filter to points
-    applyIsoFilter();
-
-  } catch (e) {
-    showErr(e.message || String(e));
-    console.error(e);
-  }
-});
-
-clearBtn.addEventListener('click', () => {
-  clearErr();
-  currentIsoGeometry = null;
-  map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features: [] });
-  applyIsoFilter();
-});
-</script>
-</body>
-</html>
+  if (!res.ok) throw new Error(`Isochrone ${res.status}: ${await res.text().catch(()=>res.statusText)}`);
+  re
