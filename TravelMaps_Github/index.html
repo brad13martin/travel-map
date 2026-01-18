@@ -158,4 +158,87 @@ async function fetchIso(lng, lat, minutes, profile){
   url.searchParams.set('access_token', mapboxgl.accessToken);
   const res = await fetch(url.toString());
   if (!res.ok) throw new Error(`Isochrone ${res.status}: ${await res.text().catch(()=>res.statusText)}`);
-  re
+  return await res.json();
+}
+
+// Build a corridor: sample along the route, get isochrones, union polygons
+async function buildRouteCorridor(line, minutes, profile){
+  if (!line || !line.coordinates || line.coordinates.length < 2) {
+    throw new Error('No route geometry yet. Set start/end and ensure a route is visible.');
+  }
+
+  const lineKm = turf.length(line, { units:'kilometers' });
+  if (lineKm === 0) throw new Error('Route length is zero.');
+
+  // derive sampling spacing from minutes and a rough average speed
+  const r_km = (AVG_SPEED_KMH[profile] || 65) * (minutes/60); // radius-ish
+  let spacing = Math.max(0.75 * r_km, 1);                    // km between samples
+  let count = Math.ceil(lineKm / spacing);
+  if (count > MAX_SAMPLES) {
+    count = MAX_SAMPLES;
+    spacing = lineKm / count;
+  }
+
+  // sample points along the line
+  const samples = [];
+  for (let i = 0; i <= count; i++) {
+    const d = Math.min(i * spacing, lineKm);
+    const pt = turf.along(line, d, { units:'kilometers' });
+    samples.push(pt.geometry.coordinates);
+  }
+
+  // fetch isochrones sequentially (kinder on rate limits)
+  let unionGeom = null;
+  for (let i = 0; i < samples.length; i++) {
+    const [lng, lat] = samples[i];
+    const gj = await fetchIso(lng, lat, minutes, profile);
+    const feat = gj.features?.[0];
+    if (!feat) continue;
+    unionGeom = unionGeom
+      ? turf.union({ type:'Feature', geometry: unionGeom }, feat).geometry
+      : feat.geometry;
+  }
+
+  if (!unionGeom) throw new Error('Failed to build isochrone corridor (no polygons returned).');
+  return unionGeom; // MultiPolygon/Polygon
+}
+
+// Apply filter to points
+function applyIsoFilter(geom){
+  const cond = ['all'];
+  if (geom) cond.push(['within', geom]);
+  if (map.getLayer(DATA_LAYER_ID)) map.setFilter(DATA_LAYER_ID, cond);
+}
+
+// ====== BUTTONS ======
+applyBtn.addEventListener('click', async () => {
+  clearErr();
+  try {
+    if (!currentRouteLine) throw new Error('No route yet. Set a start and destination in the Directions box.');
+    const minutes = Number(minsInput.value || 15);
+    const mode = document.querySelector('input[name="mode"]:checked').value || 'driving';
+
+    const corridor = await buildRouteCorridor(currentRouteLine, minutes, mode);
+
+    // update display + filter
+    map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features:[{ type:'Feature', geometry:corridor, properties:{} }] });
+    applyIsoFilter(corridor);
+
+    // zoom to corridor
+    const bbox = turf.bbox({ type:'Feature', geometry:corridor, properties:{} });
+    if (bbox && isFinite(bbox[0])) map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 50, duration: 700 });
+
+  } catch (e) {
+    showErr(e.message || String(e));
+    console.error(e);
+  }
+});
+
+clearBtn.addEventListener('click', () => {
+  clearErr();
+  map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features: [] });
+  applyIsoFilter(null);
+});
+</script>
+</body>
+</html>
