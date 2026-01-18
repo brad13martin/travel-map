@@ -24,6 +24,7 @@
   #err{position:absolute;left:12px;bottom:12px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.12);font-size:12px;max-width:70ch;display:none;z-index:4;white-space:pre-wrap}
   #dbg{position:absolute;right:12px;bottom:12px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:6px 8px;font-size:12px;z-index:4}
   .mapboxgl-ctrl-top-right{margin-top:8px}
+  button:disabled{opacity:.5;cursor:not-allowed}
 </style>
 </head>
 <body>
@@ -39,7 +40,7 @@
     <label><input type="radio" name="mode" value="walking"> Walking</label>
     <label><input type="radio" name="mode" value="cycling"> Cycling</label>
   </span>
-  <button id="applyIso" class="pill">Apply to route</button>
+  <button id="applyIso" class="pill" disabled>Apply to route</button>
   <button id="clearIso" class="pill">Clear</button>
 </div>
 
@@ -52,8 +53,8 @@
 // ====== CONFIG ======
 mapboxgl.accessToken = 'pk.eyJ1IjoiYnJhZDEzbWFydGluIiwiYSI6ImNta2p6eHI5MzE4YzAzY282aXE4Mjhxc3QifQ.tkosuQGdRkfSMoRVWCakbg';
 
-const STYLE_URL   = 'mapbox://styles/brad13martin/cmkjztnvs001u01qm6lsmeold';
-const GEO_PATH    = 'data/places.geojson';
+const STYLE_URL = 'mapbox://styles/brad13martin/cmkjztnvs001u01qm6lsmeold';
+const GEO_PATH  = 'data/places.geojson';
 
 const GEO_SOURCE_ID = 'places-geo';
 const GEO_LAYER_ID  = 'places-geo-points';
@@ -71,18 +72,13 @@ const applyBtn  = document.getElementById('applyIso');
 const clearBtn  = document.getElementById('clearIso');
 const errBox    = document.getElementById('err');
 const visOut    = document.getElementById('visCount');
+
 minsInput.addEventListener('input', () => minsVal.textContent = minsInput.value);
 function showErr(msg){ errBox.style.display='block'; errBox.textContent = msg; }
 function clearErr(){ errBox.style.display='none'; errBox.textContent=''; }
 
-// Apply button gating
 let routeReady = false;
-function setApplyEnabled(on) {
-  applyBtn.disabled = !on;
-  applyBtn.style.opacity = on ? '1' : '0.5';
-  applyBtn.style.cursor = on ? 'pointer' : 'not-allowed';
-}
-setApplyEnabled(false);
+function setApplyEnabled(on){ routeReady = !!on; applyBtn.disabled = !on; }
 
 // ====== MAP & DIRECTIONS ======
 const map = new mapboxgl.Map({
@@ -107,19 +103,7 @@ map.addControl(directions, 'top-right');
 
 let currentRouteLine = null;
 
-// Robust getter: use stored geometry or peek DOM stash
-function getActiveRouteLine() {
-  if (currentRouteLine?.coordinates?.length) return currentRouteLine;
-  try {
-    const el = document.querySelector('.mapbox-directions-instructions, .directions-control-instructions');
-    if (el && el.__results && el.__results[0]?.route?.geometry?.coordinates) {
-      return { type: 'LineString', coordinates: el.__results[0].route.geometry.coordinates };
-    }
-  } catch {}
-  return null;
-}
-
-// Store route and stash fallback copy
+// Primary route capture: event
 directions.on('route', e => {
   try {
     const r = e?.route?.[0];
@@ -130,19 +114,42 @@ directions.on('route', e => {
     } else {
       currentRouteLine = null;
     }
-    const el = document.querySelector('.mapbox-directions-instructions, .directions-control-instructions');
-    if (el) el.__results = [{ route: r }];
+    setApplyEnabled(!!currentRouteLine?.coordinates?.length);
+    if (routeReady) applyIsoFromCurrentControls().catch(console.error);
+  } catch { currentRouteLine = null; setApplyEnabled(false); }
+});
 
-    routeReady = !!currentRouteLine?.coordinates?.length;
-    setApplyEnabled(routeReady);
+// Robust getter: 1) stored geometry, 2) read 'directions' source data
+function getActiveRouteLine() {
+  if (currentRouteLine?.coordinates?.length) return currentRouteLine;
 
-    if (routeReady) {
-      applyIsoFromCurrentControls().catch(err => {
-        showErr(err.message || String(err));
-        console.error(err);
-      });
+  try {
+    const src = map.getSource('directions');
+    // Mapbox GL JS v3 GeoJSONSource has a private _data; if present, use it.
+    const data = src && (src._data || (src.serialize && src.serialize().data));
+    if (data && data.features && data.features.length) {
+      // Look for a LineString with many coords
+      const line = data.features.find(f => f.geometry && f.geometry.type === 'LineString' && f.geometry.coordinates?.length > 1);
+      if (line) return { type:'LineString', coordinates: line.geometry.coordinates };
+      // Sometimes the route is MultiLineString
+      const mline = data.features.find(f => f.geometry && f.geometry.type === 'MultiLineString');
+      if (mline && mline.geometry.coordinates?.length) {
+        // flatten first segment
+        return { type:'LineString', coordinates: mline.geometry.coordinates[0] };
+      }
     }
-  } catch { currentRouteLine = null; }
+  } catch (e) {
+    // ignore and fall through
+  }
+  return null;
+}
+
+// Secondary route capture: when the 'directions' source loads/updates
+map.on('sourcedata', e => {
+  if (e.sourceId !== 'directions' || !map.isSourceLoaded('directions')) return;
+  const line = getActiveRouteLine();
+  setApplyEnabled(!!line?.coordinates?.length);
+  if (routeReady) applyIsoFromCurrentControls().catch(console.error);
 });
 
 // ====== LOAD LAYERS ======
@@ -222,7 +229,7 @@ async function fetchIso(lng, lat, minutes, profile){
 
 async function buildRouteCorridor(line, minutes, profile){
   if (!line?.coordinates || line.coordinates.length < 2) {
-    throw new Error('No route geometry yet. Set start and destination, wait for the blue line.');
+    throw new Error('No route geometry yet. Enter start & destination and wait for the blue route line.');
   }
   const lineKm = turf.length(line, { units:'kilometers' });
   if (!isFinite(lineKm) || lineKm <= 0) throw new Error('Route length is zero.');
@@ -278,8 +285,9 @@ function applyIsoFilter(featureOrNull){
 
 // Shared function used by both route event and Apply button
 async function applyIsoFromCurrentControls() {
+  clearErr();
   const line = getActiveRouteLine();
-  if (!line) throw new Error('No route yet. Set a start and destination, wait for the blue line.');
+  if (!line) throw new Error('No route yet. Enter start & destination and wait for the blue route line.');
   const minutes = Number(minsInput.value || 15);
   const mode = (document.querySelector('input[name="mode"]:checked')?.value || 'driving');
 
@@ -297,7 +305,6 @@ async function applyIsoFromCurrentControls() {
 
 // ====== BUTTONS ======
 applyBtn.addEventListener('click', async () => {
-  clearErr();
   try {
     if (!routeReady) throw new Error('Enter a start and destination first. The Apply button enables when the route is ready.');
     await applyIsoFromCurrentControls();
