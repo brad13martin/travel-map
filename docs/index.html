@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Didius Travel Map — Route-wide Minutes Filter (GeoJSON)</title>
+<title>Didius Travel Map — Inputs-only Directions + Route Minutes Filter</title>
 
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet">
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.js"></script>
@@ -80,7 +80,7 @@ function clearErr(){ errBox.style.display='none'; errBox.textContent=''; }
 let routeReady = false;
 function setApplyEnabled(on){ routeReady = !!on; applyBtn.disabled = !on; }
 
-// ====== MAP & DIRECTIONS ======
+// ====== MAP ======
 const map = new mapboxgl.Map({
   container: 'map',
   style: STYLE_URL,
@@ -90,16 +90,25 @@ const map = new mapboxgl.Map({
 map.addControl(new mapboxgl.NavigationControl());
 map.on('error', ev => showErr('Mapbox: ' + (ev?.error?.message || JSON.stringify(ev))));
 
-// Keep instructions visible to stabilize route detection
+// ====== DIRECTIONS (inputs-only) ======
 const directions = new MapboxDirections({
   accessToken: mapboxgl.accessToken,
   profile: 'mapbox/driving',
   unit: 'imperial',
   alternatives: true,
-  controls: { instructions: true },
+  controls: { instructions: true, inputs: true, profileSwitcher: true },
+  interactive: false,  // disable map clicks to set A/B
+  draggable: false,    // disable dragging A/B pins
   geometries: 'geojson'
 });
 map.addControl(directions, 'top-right');
+
+// Safety net: if the plugin ever enters "placing" mode, block the map click from propagating.
+map.on('click', (e) => {
+  const box = document.querySelector('.mapboxgl-ctrl-directions');
+  const placing = box && (box.classList.contains('is-placing') || box.classList.contains('directions-placing'));
+  if (placing) e.originalEvent.stopImmediatePropagation();
+});
 
 let currentRouteLine = null;
 
@@ -119,32 +128,25 @@ directions.on('route', e => {
   } catch { currentRouteLine = null; setApplyEnabled(false); }
 });
 
-// Robust getter: 1) stored geometry, 2) read 'directions' source data
+// Robust getter: 1) stored geometry, 2) read 'directions' source if present
 function getActiveRouteLine() {
   if (currentRouteLine?.coordinates?.length) return currentRouteLine;
-
   try {
     const src = map.getSource('directions');
-    // Mapbox GL JS v3 GeoJSONSource has a private _data; if present, use it.
     const data = src && (src._data || (src.serialize && src.serialize().data));
     if (data && data.features && data.features.length) {
-      // Look for a LineString with many coords
       const line = data.features.find(f => f.geometry && f.geometry.type === 'LineString' && f.geometry.coordinates?.length > 1);
       if (line) return { type:'LineString', coordinates: line.geometry.coordinates };
-      // Sometimes the route is MultiLineString
       const mline = data.features.find(f => f.geometry && f.geometry.type === 'MultiLineString');
       if (mline && mline.geometry.coordinates?.length) {
-        // flatten first segment
         return { type:'LineString', coordinates: mline.geometry.coordinates[0] };
       }
     }
-  } catch (e) {
-    // ignore and fall through
-  }
+  } catch {}
   return null;
 }
 
-// Secondary route capture: when the 'directions' source loads/updates
+// Secondary route capture: when 'directions' source updates
 map.on('sourcedata', e => {
   if (e.sourceId !== 'directions' || !map.isSourceLoaded('directions')) return;
   const line = getActiveRouteLine();
@@ -154,12 +156,16 @@ map.on('sourcedata', e => {
 
 // ====== LOAD LAYERS ======
 map.on('load', async () => {
-  // Isochrone shells
+  // Isochrone shells (you can change colors here)
   map.addSource(ISO_SOURCE_ID, { type: 'geojson', data: { type:'FeatureCollection', features: [] } });
   map.addLayer({ id: ISO_LAYER_FILL, type: 'fill', source: ISO_SOURCE_ID,
-    paint: { 'fill-color': '#a836e0', 'fill-opacity': 0.23 } });
+    paint: { 'fill-color': '#7c3aed', 'fill-opacity': 0.18 } });      // fill color/opacity
   map.addLayer({ id: ISO_LAYER_LINE, type: 'line', source: ISO_SOURCE_ID,
-    paint: { 'line-color': '#41065e', 'line-width': 2, 'line-opacity': 0.8 } });
+    paint: { 'line-color': '#5b21b6', 'line-width': 2.5, 'line-opacity': 0.9 } }); // outline
+
+  // Keep corridor under points
+  map.moveLayer(ISO_LAYER_FILL);
+  map.moveLayer(ISO_LAYER_LINE);
 
   // GeoJSON points
   try {
@@ -180,7 +186,7 @@ map.on('load', async () => {
     });
     console.log('Using GeoJSON points from', GEO_PATH);
 
-    // Popup
+    // Popups
     map.on('click', GEO_LAYER_ID, e => {
       const p = e.features[0].properties || {};
       const ll = e.features[0].geometry.coordinates;
@@ -201,10 +207,10 @@ map.on('load', async () => {
     document.getElementById('legend').innerHTML = `
       <b>Legend</b><br>
       <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2563eb;margin-right:6px"></span>Place<br>
-      <span style="display:inline-block;width:10px;height:10px;background:#10b981;margin-right:6px"></span>Reachable area
+      <span style="display:inline-block;width:10px;height:10px;background:#7c3aed;margin-right:6px"></span>Reachable area
     `;
 
-    // Init count + on move
+    // Init count + update on pan/zoom
     updateVisibleCount();
     map.on('moveend', updateVisibleCount);
 
