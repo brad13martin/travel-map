@@ -3,17 +3,14 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Didius Travel Map — Route-wide Minutes Filter</title>
+<title>Didius Travel Map — Route-wide Minutes Filter (GeoJSON points)</title>
 
-<!-- Mapbox GL core -->
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet">
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.js"></script>
 
-<!-- Directions plugin -->
 <link href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.css" rel="stylesheet">
 <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.js"></script>
 
-<!-- Turf.js for geometry ops -->
 <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 
 <style>
@@ -31,7 +28,6 @@
 </head>
 <body>
 
-<!-- Controls -->
 <div class="panel">
   <span class="pill" style="background:#fff">Within 
     <input id="mins" type="range" min="5" max="60" step="5" value="15" />
@@ -57,19 +53,23 @@
 mapboxgl.accessToken = 'pk.eyJ1IjoiYnJhZDEzbWFydGluIiwiYSI6ImNta2p6eHI5MzE4YzAzY282aXE4Mjhxc3QifQ.tkosuQGdRkfSMoRVWCakbg';
 
 const STYLE_URL   = 'mapbox://styles/brad13martin/cmkjztnvs001u01qm6lsmeold';
+
+// Your tileset (fallback)
 const TILESET_URL = 'mapbox://brad13martin.c1m5hzkh';
 const SOURCE_LAYER = 'travelmap_geocoded-5lk8ms';
 
-const DATA_SOURCE_ID = 'places';
-const DATA_LAYER_ID  = 'places-points';
-const ISO_SOURCE_ID  = 'iso-source';
+// IDs
+const VEC_SOURCE_ID = 'places-vt';
+const VEC_LAYER_ID  = 'places-vt-points';
+const GEO_SOURCE_ID = 'places-geo';
+const GEO_LAYER_ID  = 'places-geo-points';
+const ISO_SOURCE_ID = 'iso-source';
 const ISO_LAYER_FILL = 'iso-fill';
 const ISO_LAYER_LINE = 'iso-line';
 
-const MAX_SAMPLES = 12; // cap Isochrone calls per route
+const MAX_SAMPLES = 12;
 const AVG_SPEED_KMH = { driving: 65, walking: 5, cycling: 18 };
 
-// ====== UI hooks ======
 const minsInput = document.getElementById('mins');
 const minsVal   = document.getElementById('minsVal');
 const applyBtn  = document.getElementById('applyIso');
@@ -80,7 +80,6 @@ minsInput.addEventListener('input', () => minsVal.textContent = minsInput.value)
 function showErr(msg){ errBox.style.display='block'; errBox.textContent = msg; }
 function clearErr(){ errBox.style.display='none'; errBox.textContent=''; }
 
-// ====== MAP & DIRECTIONS ======
 const map = new mapboxgl.Map({
   container: 'map',
   style: STYLE_URL,
@@ -90,7 +89,6 @@ const map = new mapboxgl.Map({
 map.addControl(new mapboxgl.NavigationControl());
 map.on('error', ev => showErr('Mapbox: ' + (ev?.error?.message || JSON.stringify(ev))));
 
-// Directions with geojson geometry so we can sample the line
 const directions = new MapboxDirections({
   accessToken: mapboxgl.accessToken,
   profile: 'mapbox/driving',
@@ -105,9 +103,9 @@ let currentRouteLine = null;
 directions.on('route', e => {
   try {
     const r = e?.route?.[0];
-    if (r && r.geometry && r.geometry.type === 'LineString') {
+    if (r?.geometry?.type === 'LineString') {
       currentRouteLine = r.geometry;
-    } else if (r && r.geometry && r.geometry.coordinates) {
+    } else if (r?.geometry?.coordinates) {
       currentRouteLine = { type:'LineString', coordinates: r.geometry.coordinates };
     } else {
       currentRouteLine = null;
@@ -115,24 +113,7 @@ directions.on('route', e => {
   } catch { currentRouteLine = null; }
 });
 
-// ====== LAYERS ======
-map.on('load', () => {
-  // Points
-  map.addSource(DATA_SOURCE_ID, { type: 'vector', url: TILESET_URL });
-  map.addLayer({
-    id: DATA_LAYER_ID,
-    type: 'circle',
-    source: DATA_SOURCE_ID,
-    'source-layer': SOURCE_LAYER,
-    paint: {
-      'circle-radius': 6,
-      'circle-color': '#2563eb',
-      'circle-stroke-color': '#fff',
-      'circle-stroke-width': 1,
-      'circle-opacity': 1   // default visible; we control this when filtering
-    }
-  });
-
+map.on('load', async () => {
   // Isochrone shells
   map.addSource(ISO_SOURCE_ID, { type: 'geojson', data: { type:'FeatureCollection', features: [] } });
   map.addLayer({ id: ISO_LAYER_FILL, type: 'fill', source: ISO_SOURCE_ID,
@@ -140,15 +121,71 @@ map.on('load', () => {
   map.addLayer({ id: ISO_LAYER_LINE, type: 'line', source: ISO_SOURCE_ID,
     paint: { 'line-color': '#10b981', 'line-width': 2, 'line-opacity': 0.8 } });
 
+  // Try to load GeoJSON points
+  let usingGeo = false;
+  try {
+    const resp = await fetch('data/places.geojson', { cache: 'no-store' });
+    if (!resp.ok) throw new Error('No local GeoJSON found');
+    const gj = await resp.json();
+    map.addSource(GEO_SOURCE_ID, { type: 'geojson', data: gj });
+    map.addLayer({
+      id: GEO_LAYER_ID, type: 'circle', source: GEO_SOURCE_ID,
+      paint: {
+        'circle-radius': 6,
+        'circle-color': '#2563eb',
+        'circle-stroke-color': '#fff',
+        'circle-stroke-width': 1,
+        'circle-opacity': 1
+      }
+    });
+    usingGeo = true;
+    console.log('Using GeoJSON points from data/places.geojson');
+  } catch (e) {
+    console.warn('Falling back to vector tiles for points:', e.message || e);
+    // Vector fallback
+    map.addSource(VEC_SOURCE_ID, { type: 'vector', url: TILESET_URL });
+    map.addLayer({
+      id: VEC_LAYER_ID,
+      type: 'circle',
+      source: VEC_SOURCE_ID,
+      'source-layer': SOURCE_LAYER,
+      paint: {
+        'circle-radius': 6,
+        'circle-color': '#2563eb',
+        'circle-stroke-color': '#fff',
+        'circle-stroke-width': 1,
+        'circle-opacity': 1
+      }
+    });
+    showErr('Tip: Add data/places.geojson for precise “within X minutes” filtering. Vector-tile fallback may not filter as expected.');
+  }
+
+  // Popup for whichever layer exists
+  const ptsLayer = usingGeo ? GEO_LAYER_ID : VEC_LAYER_ID;
+  map.on('click', ptsLayer, e => {
+    const p = e.features[0].properties || {};
+    const ll = e.features[0].geometry.coordinates;
+    const g = k => (p[k] ? String(p[k]) : '');
+    const lines = [
+      `<strong>${g('Name') || 'Place'}</strong>`,
+      g('Type') && `<div><em>${g('Type')}</em></div>`,
+      (g('City') || g('State')) && `${g('City')}${g('City')&&g('State')?', ':''}${g('State')}`,
+      g('Notes') && `<div style="margin-top:6px">${g('Notes')}</div>`,
+      g('URL') && `<div style="margin-top:6px"><a href="${g('URL')}" target="_blank" rel="noopener">Open link</a></div>`
+    ].filter(Boolean);
+    new mapboxgl.Popup().setLngLat(ll).setHTML(lines.join('<br>')).addTo(map);
+  });
+  map.on('mouseenter', ptsLayer, () => map.getCanvas().style.cursor = 'pointer');
+  map.on('mouseleave', ptsLayer, () => map.getCanvas().style.cursor = '');
+
   document.getElementById('legend').innerHTML = `
     <b>Legend</b><br>
     <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2563eb;margin-right:6px"></span>Place<br>
     <span style="display:inline-block;width:10px;height:10px;background:#10b981;margin-right:6px"></span>Reachable area
   `;
 
-  // initial visible count
-  updateVisibleCount();
-  map.on('moveend', updateVisibleCount);
+  // Filtering hooks
+  setupFiltering(usingGeo);
 });
 
 // ====== ISOCHRONE HELPERS ======
@@ -164,25 +201,18 @@ async function fetchIso(lng, lat, minutes, profile){
   return await res.json();
 }
 
-// Build a corridor: sample along the route, get isochrones, union polygons
 async function buildRouteCorridor(line, minutes, profile){
-  if (!line || !line.coordinates || line.coordinates.length < 2) {
+  if (!line?.coordinates || line.coordinates.length < 2) {
     throw new Error('No route geometry yet. Set start and destination.');
   }
-
   const lineKm = turf.length(line, { units:'kilometers' });
   if (!isFinite(lineKm) || lineKm <= 0) throw new Error('Route length is zero.');
 
-  // derive sampling spacing from minutes and rough average speed
   const r_km = (AVG_SPEED_KMH[profile] || 65) * (minutes/60);
   let spacing = Math.max(0.75 * r_km, 1);
   let count = Math.ceil(lineKm / spacing);
-  if (count > MAX_SAMPLES) {
-    count = MAX_SAMPLES;
-    spacing = lineKm / count;
-  }
+  if (count > MAX_SAMPLES) { count = MAX_SAMPLES; spacing = lineKm / count; }
 
-  // sample points along the line
   const samples = [];
   for (let i = 0; i <= count; i++) {
     const d = Math.min(i * spacing, lineKm);
@@ -190,7 +220,6 @@ async function buildRouteCorridor(line, minutes, profile){
     samples.push(pt.geometry.coordinates);
   }
 
-  // fetch isochrones sequentially, union geometries
   let unionGeom = null;
   for (let i = 0; i < samples.length; i++) {
     const [lng, lat] = samples[i];
@@ -201,88 +230,74 @@ async function buildRouteCorridor(line, minutes, profile){
       ? turf.union({ type:'Feature', geometry: unionGeom, properties:{} }, feat)?.geometry || unionGeom
       : feat.geometry;
   }
-
   if (!unionGeom) throw new Error('Failed to build isochrone corridor.');
-  return unionGeom; // Polygon or MultiPolygon
+  return unionGeom;
 }
 
-// Maintain a Feature we can feed to expressions
+// ====== FILTERING ======
 let currentIsoFeature = null;
 
-// Apply filter to points using both filter and opacity
-function applyIsoFilter(featureOrNull){
-  if (!map.getLayer(DATA_LAYER_ID)) return;
+function setupFiltering(usingGeo){
+  const ptsLayer = usingGeo ? GEO_LAYER_ID : VEC_LAYER_ID;
 
-  if (featureOrNull) {
-    const literalFeature = ['literal', featureOrNull];
+  function updateVisibleCount(){
+    try {
+      const vis = map.queryRenderedFeatures({ layers:[ptsLayer] }).length;
+      visOut.textContent = String(vis);
+    } catch { visOut.textContent = 'n/a'; }
+  }
+  map.on('moveend', updateVisibleCount);
 
-    // Filter: show only features inside the corridor
-    map.setFilter(DATA_LAYER_ID, ['all', ['within', literalFeature]]);
+  function applyIsoFilter(featureOrNull){
+    if (!map.getLayer(ptsLayer)) return;
 
-    // Opacity fallback: 1 if inside, 0 if outside
-    map.setPaintProperty(
-      DATA_LAYER_ID,
-      'circle-opacity',
-      ['case', ['within', literalFeature], 1, 0]
-    );
-  } else {
-    // Clear: show everything
-    map.setFilter(DATA_LAYER_ID, null);
-    map.setPaintProperty(DATA_LAYER_ID, 'circle-opacity', 1);
+    if (featureOrNull) {
+      const lit = ['literal', featureOrNull];
+
+      // Filter and opacity gate
+      map.setFilter(ptsLayer, ['all', ['within', lit]]);
+      map.setPaintProperty(ptsLayer, 'circle-opacity', ['case', ['within', lit], 1, 0]);
+    } else {
+      map.setFilter(ptsLayer, null);
+      map.setPaintProperty(ptsLayer, 'circle-opacity', 1);
+    }
+    updateVisibleCount();
   }
 
-  // Debug: update visible count in viewport
+  // Buttons
+  applyBtn.addEventListener('click', async () => {
+    clearErr();
+    try {
+      if (!currentRouteLine) throw new Error('No route yet. Set a start and destination.');
+      const minutes = Number(minsInput.value || 15);
+      const mode = (document.querySelector('input[name="mode"]:checked')?.value || 'driving');
+
+      const corridorGeom = await buildRouteCorridor(currentRouteLine, minutes, mode);
+      currentIsoFeature = { type:'Feature', geometry:corridorGeom, properties:{} };
+
+      map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features:[ currentIsoFeature ] });
+      applyIsoFilter(currentIsoFeature);
+
+      const bbox = turf.bbox(currentIsoFeature);
+      if (bbox && isFinite(bbox[0])) {
+        map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 50, duration: 700 });
+      }
+    } catch (e) {
+      showErr(e.message || String(e));
+      console.error(e);
+    }
+  });
+
+  clearBtn.addEventListener('click', () => {
+    clearErr();
+    currentIsoFeature = null;
+    map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features: [] });
+    applyIsoFilter(null);
+  });
+
+  // Initial count
   updateVisibleCount();
 }
-
-function updateVisibleCount(){
-  try {
-    const vis = map.queryRenderedFeatures({ layers:[DATA_LAYER_ID] }).length;
-    visOut.textContent = String(vis);
-    // console.log('Visible points:', vis);
-  } catch {
-    visOut.textContent = 'n/a';
-  }
-}
-
-// ====== BUTTONS ======
-applyBtn.addEventListener('click', async () => {
-  clearErr();
-  try {
-    if (!currentRouteLine) throw new Error('No route yet. Set a start and destination.');
-    const minutes = Number(minsInput.value || 15);
-    const mode = (document.querySelector('input[name="mode"]:checked')?.value || 'driving');
-
-    const corridorGeom = await buildRouteCorridor(currentRouteLine, minutes, mode);
-    currentIsoFeature = { type:'Feature', geometry:corridorGeom, properties:{} };
-
-    // update display polygon
-    map.getSource(ISO_SOURCE_ID).setData({
-      type:'FeatureCollection',
-      features:[ currentIsoFeature ]
-    });
-
-    // filter points
-    applyIsoFilter(currentIsoFeature);
-
-    // zoom to corridor
-    const bbox = turf.bbox(currentIsoFeature);
-    if (bbox && isFinite(bbox[0])) {
-      map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 50, duration: 700 });
-    }
-
-  } catch (e) {
-    showErr(e.message || String(e));
-    console.error(e);
-  }
-});
-
-clearBtn.addEventListener('click', () => {
-  clearErr();
-  currentIsoFeature = null;
-  map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features: [] });
-  applyIsoFilter(null);
-});
 </script>
 </body>
 </html>
