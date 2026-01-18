@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Didius Travel Map — Inputs-only Directions + Route Minutes Filter</title>
+<title>Didius Travel Map — Inputs-only Directions + Calm Camera + Route Filter</title>
 
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet">
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.js"></script>
@@ -42,6 +42,10 @@
   </span>
   <button id="applyIso" class="pill" disabled>Apply to route</button>
   <button id="clearIso" class="pill">Clear</button>
+  <label class="pill" style="background:#fff">
+    <input id="fitToggle" type="checkbox" />
+    Fit view to corridor
+  </label>
 </div>
 
 <div id="map" aria-label="Interactive map"></div>
@@ -54,7 +58,8 @@
 mapboxgl.accessToken = 'pk.eyJ1IjoiYnJhZDEzbWFydGluIiwiYSI6ImNta2p6eHI5MzE4YzAzY282aXE4Mjhxc3QifQ.tkosuQGdRkfSMoRVWCakbg';
 
 const STYLE_URL = 'mapbox://styles/brad13martin/cmkjztnvs001u01qm6lsmeold';
-const GEO_PATH  = 'data/places.geojson';
+// IMPORTANT: index.html is in /docs and GeoJSON is in sibling /data
+const GEO_PATH  = '../data/places.geojson';
 
 const GEO_SOURCE_ID = 'places-geo';
 const GEO_LAYER_ID  = 'places-geo-points';
@@ -70,6 +75,7 @@ const minsInput = document.getElementById('mins');
 const minsVal   = document.getElementById('minsVal');
 const applyBtn  = document.getElementById('applyIso');
 const clearBtn  = document.getElementById('clearIso');
+const fitToggle = document.getElementById('fitToggle');
 const errBox    = document.getElementById('err');
 const visOut    = document.getElementById('visCount');
 
@@ -80,6 +86,10 @@ function clearErr(){ errBox.style.display='none'; errBox.textContent=''; }
 let routeReady = false;
 function setApplyEnabled(on){ routeReady = !!on; applyBtn.disabled = !on; }
 
+// Track user interactions to avoid refitting while they’re moving the map
+let userInteracting = false;
+let hasFitOnce = false;
+
 // ====== MAP ======
 const map = new mapboxgl.Map({
   container: 'map',
@@ -89,6 +99,13 @@ const map = new mapboxgl.Map({
 });
 map.addControl(new mapboxgl.NavigationControl());
 map.on('error', ev => showErr('Mapbox: ' + (ev?.error?.message || JSON.stringify(ev))));
+
+['dragstart','zoomstart','rotatestart','pitchstart'].forEach(ev =>
+  map.on(ev, () => { userInteracting = true; })
+);
+['dragend','zoomend','rotateend','pitchend'].forEach(ev =>
+  map.on(ev, () => { userInteracting = false; })
+);
 
 // ====== DIRECTIONS (inputs-only) ======
 const directions = new MapboxDirections({
@@ -124,7 +141,8 @@ directions.on('route', e => {
       currentRouteLine = null;
     }
     setApplyEnabled(!!currentRouteLine?.coordinates?.length);
-    if (routeReady) applyIsoFromCurrentControls().catch(console.error);
+    // don't auto-apply; user clicks Apply
+    hasFitOnce = false;
   } catch { currentRouteLine = null; setApplyEnabled(false); }
 });
 
@@ -151,27 +169,41 @@ map.on('sourcedata', e => {
   if (e.sourceId !== 'directions' || !map.isSourceLoaded('directions')) return;
   const line = getActiveRouteLine();
   setApplyEnabled(!!line?.coordinates?.length);
-  if (routeReady) applyIsoFromCurrentControls().catch(console.error);
+  // don't auto-apply
 });
 
 // ====== LOAD LAYERS ======
 map.on('load', async () => {
-  // Isochrone shells (you can change colors here)
+  // Isochrone shells (corridor color here)
   map.addSource(ISO_SOURCE_ID, { type: 'geojson', data: { type:'FeatureCollection', features: [] } });
   map.addLayer({ id: ISO_LAYER_FILL, type: 'fill', source: ISO_SOURCE_ID,
-    paint: { 'fill-color': '#7c3aed', 'fill-opacity': 0.18 } });      // fill color/opacity
+    paint: { 'fill-color': '#7c3aed', 'fill-opacity': 0.18 } }); // violet fill
   map.addLayer({ id: ISO_LAYER_LINE, type: 'line', source: ISO_SOURCE_ID,
-    paint: { 'line-color': '#5b21b6', 'line-width': 2.5, 'line-opacity': 0.9 } }); // outline
+    paint: { 'line-color': '#5b21b6', 'line-width': 2.5, 'line-opacity': 0.9 } }); // violet outline
 
-  // Keep corridor under points
+  // Keep corridor under points (optional; if you want it above, remove these)
   map.moveLayer(ISO_LAYER_FILL);
   map.moveLayer(ISO_LAYER_LINE);
 
   // GeoJSON points
   try {
+    console.log('Fetching GeoJSON from:', GEO_PATH);
     const resp = await fetch(GEO_PATH, { cache: 'no-store' });
-    if (!resp.ok) throw new Error(`Fetch failed: ${resp.status}`);
+    console.log('GeoJSON HTTP status:', resp.status);
+    if (!resp.ok) throw new Error(`Fetch failed: ${resp.status} ${resp.statusText}`);
     const gj = await resp.json();
+
+    if (gj.type !== 'FeatureCollection' || !Array.isArray(gj.features)) {
+      throw new Error('Invalid GeoJSON: expected FeatureCollection with features array.');
+    }
+
+    // Light validation to catch lat/lon reversal quickly
+    const firstPoint = gj.features.find(f => f.geometry && f.geometry.type === 'Point');
+    if (!firstPoint) {
+      console.warn('No Point features found in GeoJSON. Are your features Points?');
+    } else if (!Array.isArray(firstPoint.geometry.coordinates) || firstPoint.geometry.coordinates.length < 2) {
+      console.warn('Point feature has invalid coordinates.');
+    }
 
     map.addSource(GEO_SOURCE_ID, { type: 'geojson', data: gj });
     map.addLayer({
@@ -184,7 +216,7 @@ map.on('load', async () => {
         'circle-opacity': 1
       }
     });
-    console.log('Using GeoJSON points from', GEO_PATH);
+    console.log(`Loaded ${gj.features.length} features from ${GEO_PATH}`);
 
     // Popups
     map.on('click', GEO_LAYER_ID, e => {
@@ -215,7 +247,7 @@ map.on('load', async () => {
     map.on('moveend', updateVisibleCount);
 
   } catch (e) {
-    showErr('Could not load data/places.geojson. Ensure the file exists at that path.');
+    showErr('Could not load ../data/places.geojson. Make sure it exists relative to /docs/index.html (and that the path/casing match).');
     console.error(e);
   }
 });
@@ -303,11 +335,20 @@ async function applyIsoFromCurrentControls() {
   map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features:[ currentIsoFeature ] });
   applyIsoFilter(currentIsoFeature);
 
-  const bbox = turf.bbox(currentIsoFeature);
-  if (bbox && isFinite(bbox[0])) {
-    map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 50, duration: 700 });
+  // Fit only if requested and not while interacting
+  if (!userInteracting && (fitToggle.checked || !hasFitOnce)) {
+    const bbox = turf.bbox(currentIsoFeature);
+    if (bbox && isFinite(bbox[0])) {
+      map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 50, duration: 600 });
+      hasFitOnce = true;
+    }
   }
 }
+
+// Recompute corridor if you change minutes and a route is ready
+minsInput.addEventListener('change', () => {
+  if (routeReady) applyIsoFromCurrentControls().catch(console.error);
+});
 
 // ====== BUTTONS ======
 applyBtn.addEventListener('click', async () => {
@@ -327,6 +368,7 @@ clearBtn.addEventListener('click', () => {
     map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features: [] });
   }
   applyIsoFilter(null);
+  hasFitOnce = false;
 });
 </script>
 </body>
