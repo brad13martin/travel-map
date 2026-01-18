@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Didius Travel Map — Route-wide Minutes Filter (GeoJSON)</title>
+
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet">
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.js"></script>
+
+<link href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.css" rel="stylesheet">
+<script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+
+<style>
+  html,body{height:100%;margin:0;font-family:system-ui,Inter,Arial}
+  #map{height:100vh;width:100%}
+  .panel{position:absolute;z-index:3;left:12px;top:12px;background:#fff;padding:10px 12px;border-radius:12px;border:1px solid #e5e7eb;box-shadow:0 6px 20px rgba(0,0,0,.12);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .panel label{font-size:12px;color:#111827}
+  .panel input[type="range"]{width:160px}
+  .pill{border:1px solid #e5e7eb;border-radius:999px;padding:4px 10px;font-size:12px;background:#f8fafc;cursor:pointer}
+  #legend{position:absolute;right:12px;top:12px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.12);z-index:2}
+  #err{position:absolute;left:12px;bottom:12px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.12);font-size:12px;max-width:70ch;display:none;z-index:4;white-space:pre-wrap}
+  #dbg{position:absolute;right:12px;bottom:12px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:6px 8px;font-size:12px;z-index:4}
+  .mapboxgl-ctrl-top-right{margin-top:8px}
+  button:disabled{opacity:.5;cursor:not-allowed}
+</style>
+</head>
+<body>
+
+<div class="panel">
+  <span class="pill" style="background:#fff">Within 
+    <input id="mins" type="range" min="5" max="60" step="5" value="15" />
+    <strong><span id="minsVal">15</span> min</strong>
+  </span>
+  <span class="pill" style="background:#fff">
+    Mode:
+    <label><input type="radio" name="mode" value="driving" checked> Driving</label>
+    <label><input type="radio" name="mode" value="walking"> Walking</label>
+    <label><input type="radio" name="mode" value="cycling"> Cycling</label>
+  </span>
+  <button id="applyIso" class="pill" disabled>Apply to route</button>
+  <button id="clearIso" class="pill">Clear</button>
+</div>
+
+<div id="map" aria-label="Interactive map"></div>
+<div id="legend"></div>
+<div id="err"></div>
+<div id="dbg">Visible points: <span id="visCount">0</span></div>
+
+<script>
+// ====== CONFIG ======
+mapboxgl.accessToken = 'pk.eyJ1IjoiYnJhZDEzbWFydGluIiwiYSI6ImNta2p6eHI5MzE4YzAzY282aXE4Mjhxc3QifQ.tkosuQGdRkfSMoRVWCakbg';
+
+const STYLE_URL = 'mapbox://styles/brad13martin/cmkjztnvs001u01qm6lsmeold';
+const GEO_PATH  = 'data/places.geojson';
+
+const GEO_SOURCE_ID = 'places-geo';
+const GEO_LAYER_ID  = 'places-geo-points';
+const ISO_SOURCE_ID = 'iso-source';
+const ISO_LAYER_FILL = 'iso-fill';
+const ISO_LAYER_LINE = 'iso-line';
+
+const MAX_SAMPLES = 12;
+const AVG_SPEED_KMH = { driving: 65, walking: 5, cycling: 18 };
+
+// ====== UI refs ======
+const minsInput = document.getElementById('mins');
+const minsVal   = document.getElementById('minsVal');
+const applyBtn  = document.getElementById('applyIso');
+const clearBtn  = document.getElementById('clearIso');
+const errBox    = document.getElementById('err');
+const visOut    = document.getElementById('visCount');
+
+minsInput.addEventListener('input', () => minsVal.textContent = minsInput.value);
+function showErr(msg){ errBox.style.display='block'; errBox.textContent = msg; }
+function clearErr(){ errBox.style.display='none'; errBox.textContent=''; }
+
+let routeReady = false;
+function setApplyEnabled(on){ routeReady = !!on; applyBtn.disabled = !on; }
+
+// ====== MAP & DIRECTIONS ======
+const map = new mapboxgl.Map({
+  container: 'map',
+  style: STYLE_URL,
+  center: [-80, 40],
+  zoom: 5
+});
+map.addControl(new mapboxgl.NavigationControl());
+map.on('error', ev => showErr('Mapbox: ' + (ev?.error?.message || JSON.stringify(ev))));
+
+// Keep instructions visible to stabilize route detection
+const directions = new MapboxDirections({
+  accessToken: mapboxgl.accessToken,
+  profile: 'mapbox/driving',
+  unit: 'imperial',
+  alternatives: true,
+  controls: { instructions: true },
+  geometries: 'geojson'
+});
+map.addControl(directions, 'top-right');
+
+let currentRouteLine = null;
+
+// Primary route capture: event
+directions.on('route', e => {
+  try {
+    const r = e?.route?.[0];
+    if (r?.geometry?.type === 'LineString') {
+      currentRouteLine = r.geometry;
+    } else if (r?.geometry?.coordinates) {
+      currentRouteLine = { type:'LineString', coordinates: r.geometry.coordinates };
+    } else {
+      currentRouteLine = null;
+    }
+    setApplyEnabled(!!currentRouteLine?.coordinates?.length);
+    if (routeReady) applyIsoFromCurrentControls().catch(console.error);
+  } catch { currentRouteLine = null; setApplyEnabled(false); }
+});
+
+// Robust getter: 1) stored geometry, 2) read 'directions' source data
+function getActiveRouteLine() {
+  if (currentRouteLine?.coordinates?.length) return currentRouteLine;
+
+  try {
+    const src = map.getSource('directions');
+    // Mapbox GL JS v3 GeoJSONSource has a private _data; if present, use it.
+    const data = src && (src._data || (src.serialize && src.serialize().data));
+    if (data && data.features && data.features.length) {
+      // Look for a LineString with many coords
+      const line = data.features.find(f => f.geometry && f.geometry.type === 'LineString' && f.geometry.coordinates?.length > 1);
+      if (line) return { type:'LineString', coordinates: line.geometry.coordinates };
+      // Sometimes the route is MultiLineString
+      const mline = data.features.find(f => f.geometry && f.geometry.type === 'MultiLineString');
+      if (mline && mline.geometry.coordinates?.length) {
+        // flatten first segment
+        return { type:'LineString', coordinates: mline.geometry.coordinates[0] };
+      }
+    }
+  } catch (e) {
+    // ignore and fall through
+  }
+  return null;
+}
+
+// Secondary route capture: when the 'directions' source loads/updates
+map.on('sourcedata', e => {
+  if (e.sourceId !== 'directions' || !map.isSourceLoaded('directions')) return;
+  const line = getActiveRouteLine();
+  setApplyEnabled(!!line?.coordinates?.length);
+  if (routeReady) applyIsoFromCurrentControls().catch(console.error);
+});
+
+// ====== LOAD LAYERS ======
+map.on('load', async () => {
+  // Isochrone shells
+  map.addSource(ISO_SOURCE_ID, { type: 'geojson', data: { type:'FeatureCollection', features: [] } });
+  map.addLayer({ id: ISO_LAYER_FILL, type: 'fill', source: ISO_SOURCE_ID,
+    paint: { 'fill-color': '#10b981', 'fill-opacity': 0.12 } });
+  map.addLayer({ id: ISO_LAYER_LINE, type: 'line', source: ISO_SOURCE_ID,
+    paint: { 'line-color': '#10b981', 'line-width': 2, 'line-opacity': 0.8 } });
+
+  // GeoJSON points
+  try {
+    const resp = await fetch(GEO_PATH, { cache: 'no-store' });
+    if (!resp.ok) throw new Error(`Fetch failed: ${resp.status}`);
+    const gj = await resp.json();
+
+    map.addSource(GEO_SOURCE_ID, { type: 'geojson', data: gj });
+    map.addLayer({
+      id: GEO_LAYER_ID, type: 'circle', source: GEO_SOURCE_ID,
+      paint: {
+        'circle-radius': 6,
+        'circle-color': '#2563eb',
+        'circle-stroke-color': '#fff',
+        'circle-stroke-width': 1,
+        'circle-opacity': 1
+      }
+    });
+    console.log('Using GeoJSON points from', GEO_PATH);
+
+    // Popup
+    map.on('click', GEO_LAYER_ID, e => {
+      const p = e.features[0].properties || {};
+      const ll = e.features[0].geometry.coordinates;
+      const g = k => (p[k] ? String(p[k]) : '');
+      const lines = [
+        `<strong>${g('Name') || 'Place'}</strong>`,
+        g('Type') && `<div><em>${g('Type')}</em></div>`,
+        (g('City') || g('State')) && `${g('City')}${g('City')&&g('State')?', ':''}${g('State')}`,
+        g('Notes') && `<div style="margin-top:6px">${g('Notes')}</div>`,
+        g('URL') && `<div style="margin-top:6px"><a href="${g('URL')}" target="_blank" rel="noopener">Open link</a></div>`
+      ].filter(Boolean);
+      new mapboxgl.Popup().setLngLat(ll).setHTML(lines.join('<br>')).addTo(map);
+    });
+    map.on('mouseenter', GEO_LAYER_ID, () => map.getCanvas().style.cursor = 'pointer');
+    map.on('mouseleave', GEO_LAYER_ID, () => map.getCanvas().style.cursor = '');
+
+    // Legend
+    document.getElementById('legend').innerHTML = `
+      <b>Legend</b><br>
+      <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2563eb;margin-right:6px"></span>Place<br>
+      <span style="display:inline-block;width:10px;height:10px;background:#10b981;margin-right:6px"></span>Reachable area
+    `;
+
+    // Init count + on move
+    updateVisibleCount();
+    map.on('moveend', updateVisibleCount);
+
+  } catch (e) {
+    showErr('Could not load data/places.geojson. Ensure the file exists at that path.');
+    console.error(e);
+  }
+});
+
+// ====== ISOCHRONE HELPERS ======
+async function fetchIso(lng, lat, minutes, profile){
+  const url = new URL(`https://api.mapbox.com/isochrone/v1/mapbox/${profile}/${lng},${lat}`);
+  url.searchParams.set('contours_minutes', String(minutes));
+  url.searchParams.set('polygons', 'true');
+  url.searchParams.set('denoise', '1');
+  url.searchParams.set('generalize', '10');
+  url.searchParams.set('access_token', mapboxgl.accessToken);
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(`Isochrone ${res.status}: ${await res.text().catch(()=>res.statusText)}`);
+  return await res.json();
+}
+
+async function buildRouteCorridor(line, minutes, profile){
+  if (!line?.coordinates || line.coordinates.length < 2) {
+    throw new Error('No route geometry yet. Enter start & destination and wait for the blue route line.');
+  }
+  const lineKm = turf.length(line, { units:'kilometers' });
+  if (!isFinite(lineKm) || lineKm <= 0) throw new Error('Route length is zero.');
+
+  const r_km = (AVG_SPEED_KMH[profile] || 65) * (minutes/60);
+  let spacing = Math.max(0.75 * r_km, 1);
+  let count = Math.ceil(lineKm / spacing);
+  if (count > MAX_SAMPLES) { count = MAX_SAMPLES; spacing = lineKm / count; }
+
+  const samples = [];
+  for (let i = 0; i <= count; i++) {
+    const d = Math.min(i * spacing, lineKm);
+    const pt = turf.along(line, d, { units:'kilometers' });
+    samples.push(pt.geometry.coordinates);
+  }
+
+  let unionGeom = null;
+  for (let i = 0; i < samples.length; i++) {
+    const [lng, lat] = samples[i];
+    const gj = await fetchIso(lng, lat, minutes, profile);
+    const feat = gj.features?.[0];
+    if (!feat) continue;
+    unionGeom = unionGeom
+      ? turf.union({ type:'Feature', geometry: unionGeom, properties:{} }, feat)?.geometry || unionGeom
+      : feat.geometry;
+  }
+  if (!unionGeom) throw new Error('Failed to build isochrone corridor.');
+  return unionGeom;
+}
+
+// ====== FILTERING ======
+let currentIsoFeature = null;
+
+function updateVisibleCount(){
+  try {
+    const vis = map.queryRenderedFeatures({ layers:[GEO_LAYER_ID] }).length;
+    visOut.textContent = String(vis);
+  } catch { visOut.textContent = 'n/a'; }
+}
+
+function applyIsoFilter(featureOrNull){
+  if (!map.getLayer(GEO_LAYER_ID)) return;
+  if (featureOrNull) {
+    const lit = ['literal', featureOrNull];
+    map.setFilter(GEO_LAYER_ID, ['all', ['within', lit]]);
+    map.setPaintProperty(GEO_LAYER_ID, 'circle-opacity', ['case', ['within', lit], 1, 0]);
+  } else {
+    map.setFilter(GEO_LAYER_ID, null);
+    map.setPaintProperty(GEO_LAYER_ID, 'circle-opacity', 1);
+  }
+  updateVisibleCount();
+}
+
+// Shared function used by both route event and Apply button
+async function applyIsoFromCurrentControls() {
+  clearErr();
+  const line = getActiveRouteLine();
+  if (!line) throw new Error('No route yet. Enter start & destination and wait for the blue route line.');
+  const minutes = Number(minsInput.value || 15);
+  const mode = (document.querySelector('input[name="mode"]:checked')?.value || 'driving');
+
+  const corridorGeom = await buildRouteCorridor(line, minutes, mode);
+  currentIsoFeature = { type:'Feature', geometry:corridorGeom, properties:{} };
+
+  map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features:[ currentIsoFeature ] });
+  applyIsoFilter(currentIsoFeature);
+
+  const bbox = turf.bbox(currentIsoFeature);
+  if (bbox && isFinite(bbox[0])) {
+    map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 50, duration: 700 });
+  }
+}
+
+// ====== BUTTONS ======
+applyBtn.addEventListener('click', async () => {
+  try {
+    if (!routeReady) throw new Error('Enter a start and destination first. The Apply button enables when the route is ready.');
+    await applyIsoFromCurrentControls();
+  } catch (e) {
+    showErr(e.message || String(e));
+    console.error(e);
+  }
+});
+
+clearBtn.addEventListener('click', () => {
+  clearErr();
+  currentIsoFeature = null;
+  if (map.getSource(ISO_SOURCE_ID)) {
+    map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features: [] });
+  }
+  applyIsoFilter(null);
+});
+</script>
+</body>
+</html>
