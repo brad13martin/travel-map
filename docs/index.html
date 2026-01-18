@@ -157,9 +157,9 @@ map.on('load', async () => {
   // Isochrone shells
   map.addSource(ISO_SOURCE_ID, { type: 'geojson', data: { type:'FeatureCollection', features: [] } });
   map.addLayer({ id: ISO_LAYER_FILL, type: 'fill', source: ISO_SOURCE_ID,
-    paint: { 'fill-color': '#a836e0', 'fill-opacity': 0.2 } });
+    paint: { 'fill-color': '#a836e0', 'fill-opacity': 0.23 } });
   map.addLayer({ id: ISO_LAYER_LINE, type: 'line', source: ISO_SOURCE_ID,
-    paint: { 'line-color': '#10b981', 'line-width': 2, 'line-opacity': 0.8 } });
+    paint: { 'line-color': '#41065e', 'line-width': 2, 'line-opacity': 0.8 } });
 
   // GeoJSON points
   try {
