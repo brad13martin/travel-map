@@ -185,52 +185,88 @@ map.on('load', async () => {
   map.moveLayer(ISO_LAYER_FILL);
   map.moveLayer(ISO_LAYER_LINE);
 
-  // GeoJSON points with robust normalization
+  // GeoJSON points with super-robust normalization
   try {
     console.log('Fetching GeoJSON from:', GEO_PATH);
     const resp = await fetch(GEO_PATH, { cache: 'no-store' });
     console.log('GeoJSON HTTP status:', resp.status);
     if (!resp.ok) throw new Error(`Fetch failed: ${resp.status} ${resp.statusText}`);
     const raw = await resp.json();
+    console.log('Loaded raw object:', raw);
 
     let feats = [];
+    let interpretAsRows = false;
+
     if (raw && raw.type === 'FeatureCollection' && Array.isArray(raw.features)) {
-      console.log(`Loaded ${raw.features.length} raw features`);
+      console.log(`Loaded ${raw.features.length} raw features (FeatureCollection)`);
       feats = raw.features;
     } else if (Array.isArray(raw)) {
-      console.warn('Top-level is an array, wrapping as FeatureCollection');
-      feats = raw;
+      console.warn(`Top-level is an array of length ${raw.length}`);
+      // Decide if it's an array of features or rows
+      if (raw.length && raw[0] && typeof raw[0] === 'object' && ('geometry' in raw[0] || 'type' in raw[0])) {
+        feats = raw; // looks like features
+        console.warn('Interpreting as array of GeoJSON features');
+      } else {
+        interpretAsRows = true; // rows with Lat/Long fields
+        feats = raw;
+        console.warn('Interpreting as array of rows (will build features from Lat/Long-like fields)');
+      }
     } else {
-      throw new Error('Unrecognized data format. Expected FeatureCollection or array of features.');
+      throw new Error('Unrecognized data format. Expected FeatureCollection or array.');
     }
 
-    // Normalize to true Point features with numeric [lng, lat]
     const norm = [];
-    for (const f of feats) {
-      let props = f.properties || {};
-      // Use Point geometry if valid
-      if (f.geometry && f.geometry.type === 'Point' && Array.isArray(f.geometry.coordinates)) {
-        let [x, y] = f.geometry.coordinates;
-        x = Number(x); y = Number(y);
-        if (Number.isFinite(x) && Number.isFinite(y)) {
-          if (Math.abs(x) <= 90 && Math.abs(y) > 90) [x, y] = [y, x];
-          norm.push({ type:'Feature', geometry:{ type:'Point', coordinates:[x, y] }, properties: props });
-          continue;
+    const pushPoint = (lon, lat, props) => {
+      let x = Number(lon), y = Number(lat);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+      // auto-fix swapped
+      if (Math.abs(x) <= 90 && Math.abs(y) > 90) [x, y] = [y, x];
+      // sanity: keep within world bounds
+      if (x < -180 || x > 180 || y < -90 || y > 90) return false;
+      norm.push({ type:'Feature', geometry:{ type:'Point', coordinates:[x, y] }, properties: props || {} });
+      return true;
+    };
+
+    // Normalization
+    if (!interpretAsRows) {
+      for (const f of feats) {
+        const props = f.properties || {};
+        if (f.geometry && f.geometry.type === 'Point' && Array.isArray(f.geometry.coordinates)) {
+          if (pushPoint(f.geometry.coordinates[0], f.geometry.coordinates[1], props)) continue;
         }
+        // try properties Lat/Long
+        const lat = props.Lat ?? props.lat ?? props.latitude ?? props.Latitude;
+        const lon = props.Long ?? props.long ?? props.lng ?? props.Lng ?? props.longitude ?? props.Longitude;
+        if (lat != null && lon != null) pushPoint(lon, lat, props);
       }
-      // Build from Lat/Long properties if present
-      const lat = Number(props.Lat ?? props.lat ?? props.latitude ?? props.Latitude);
-      const lon = Number(props.Long ?? props.long ?? props.lng ?? props.Lng ?? props.longitude ?? props.Longitude);
-      if (Number.isFinite(lat) && Number.isFinite(lon)) {
-        let x = lon, y = lat;
-        if (Math.abs(x) <= 90 && Math.abs(y) > 90) [x, y] = [y, x];
-        norm.push({ type:'Feature', geometry:{ type:'Point', coordinates:[x, y] }, properties: props });
+    } else {
+      // Array of rows: search common variants
+      const guess = (o, keys) => {
+        for (const k of keys) if (o[k] != null && o[k] !== '') return o[k];
+        return null;
+      };
+      for (const row of feats) {
+        const lat = guess(row, ['Lat','lat','Latitude','latitude']);
+        const lon = guess(row, ['Long','long','Lng','lng','Longitude','longitude','Lon','lon']);
+        const name = row.Name ?? row.name ?? row.Title ?? row.title;
+        const props = { ...row };
+        if (lat != null && lon != null) {
+          if (pushPoint(lon, lat, props)) continue;
+        }
+        // Some exports put coords as a combined string
+        const coord = row.coordinates ?? row.Coordinates ?? row.coord ?? row.Coord;
+        if (typeof coord === 'string' && coord.includes(',')) {
+          const [a,b] = coord.split(',').map(s=>s.trim());
+          if (pushPoint(a,b,props)) continue;
+          if (pushPoint(b,a,props)) continue;
+        }
+        // If we get here, this row couldn't be converted; leave it out
       }
     }
 
     if (!norm.length) {
-      console.error('No valid points after normalization. First few raw features:', feats.slice(0,3));
-      throw new Error('No valid point features found. Check coordinates are numbers in [lon, lat] or that Lat and Long properties exist.');
+      console.error('No valid points after normalization. First few records:', feats.slice(0,3));
+      throw new Error('No valid point features found. Ensure you have coordinates either as Geometry Point [lon,lat] or Lat/Long fields.');
     }
 
     const gj = { type:'FeatureCollection', features: norm };
@@ -256,13 +292,23 @@ map.on('load', async () => {
       }
     } catch {}
 
+    // Debug: mark the first point with a popup so we know it rendered
+    try {
+      const first = gj.features[0];
+      new mapboxgl.Popup({ closeButton:false, closeOnClick:false })
+        .setLngLat(first.geometry.coordinates)
+        .setHTML('<div style="font-size:12px">First point</div>')
+        .addTo(map);
+      setTimeout(() => document.querySelectorAll('.mapboxgl-popup').forEach(p=>p.remove()), 2000);
+    } catch {}
+
     // Popups
     map.on('click', GEO_LAYER_ID, e => {
       const p = e.features[0].properties || {};
       const ll = e.features[0].geometry.coordinates;
       const g = k => (p[k] ? String(p[k]) : '');
       const lines = [
-        `<strong>${g('Name') || 'Place'}</strong>`,
+        `<strong>${g('Name') || g('name') || 'Place'}</strong>`,
         g('Type') && `<div><em>${g('Type')}</em></div>`,
         (g('City') || g('State')) && `${g('City')}${g('City')&&g('State')?', ':''}${g('State')}`,
         g('Notes') && `<div style="margin-top:6px">${g('Notes')}</div>`,
