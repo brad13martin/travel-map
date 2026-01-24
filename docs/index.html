@@ -299,7 +299,101 @@
         id:GEO_LAYER_ID, type:'circle', source:GEO_SOURCE_ID,
         paint:{ 'circle-radius':6,'circle-color':'#2563eb','circle-stroke-color':'#fff','circle-stroke-width':1,'circle-opacity':1 }
       });
-      
+      // 1) Load PNGs into the style
+async function addIcon(name) {
+  const url = `./assets/icons/${name}.png`; // relative to docs/index.html
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Icon fetch failed: ${url}`);
+  const bmp = await createImageBitmap(await res.blob());
+  // Use pixelRatio:2 only if your PNGs are @2x. If not, change to {pixelRatio:1}
+  map.addImage(name, bmp, { pixelRatio: 2 });
+}
+
+const iconNames = [
+  'Activity-Green','Activity-Blue','Activity-Orange','Activity-Red',
+  'Food-Green','Food-Teal','Food-Blue','Food-Orange','Food-Red',
+  'Hike-Green','Hike-Blue','Hike-Orange','Hike-Red',
+  'Stay-Green','Stay-Blue','Stay-Orange','Stay-Red'
+];
+
+for (const n of iconNames) { await addIcon(n); }
+
+// 2) Build the expression that picks the correct image per feature
+const typeLower = ['downcase', ['coalesce', ['get','Type'], '' ]];
+const isRestaurant = ['match', typeLower, ['restaurant','restaurants','food','eat'], true, false];
+const isActivity   = ['match', typeLower, ['activity','activities','attraction'], true, false];
+const isHike       = ['match', typeLower, ['hike','hiking','trail','walk'], true, false];
+const isStay       = ['match', typeLower, ['accommodation','accomodation','lodging','hotel','stay'], true, false];
+
+const restRatingText  = ['coalesce', ['get','Restaurant Rating'], '' ];
+const otherRatingText = ['coalesce', ['get','Activity / Accommodations Rating'], '' ];
+
+// Restaurants (5 labels)
+const restIconByRating = [
+  'match', restRatingText,
+  '1) Must Stop',        'Food-Green',
+  '1.5) Must Stop BUT…', 'Food-Teal',   // if your CSV uses three dots, change to "BUT..."
+  '2) Go Back',          'Food-Blue',
+  '3) Good 2nd Choice',  'Food-Orange',
+  '4) Don’t Go Back',    'Food-Red',    // if your CSV uses "Don't", change the apostrophe
+  /* default */          'Food-Blue'
+];
+
+// Activity / Hike / Stay (4-tier)
+const activityIconByRating = [
+  'match', otherRatingText,
+  '1) Top Tier',     'Activity-Green',
+  '2) Worth It',     'Activity-Blue',
+  '3) Meh',          'Activity-Orange',
+  '4) Not Worth It', 'Activity-Red',
+  /* default */      'Activity-Blue'
+];
+const hikeIconByRating = [
+  'match', otherRatingText,
+  '1) Top Tier',     'Hike-Green',
+  '2) Worth It',     'Hike-Blue',
+  '3) Meh',          'Hike-Orange',
+  '4) Not Worth It', 'Hike-Red',
+  /* default */      'Hike-Blue'
+];
+const stayIconByRating = [
+  'match', otherRatingText,
+  '1) Top Tier',     'Stay-Green',
+  '2) Worth It',     'Stay-Blue',
+  '3) Meh',          'Stay-Orange',
+  '4) Not Worth It', 'Stay-Red',
+  /* default */      'Stay-Blue'
+];
+
+// Final selector (family by Type → color by rating)
+const iconImageExpr = [
+  'case',
+  isRestaurant, restIconByRating,
+  isActivity,   activityIconByRating,
+  isHike,       hikeIconByRating,
+  isStay,       stayIconByRating,
+  /* fallback */ 'Activity-Blue'
+];
+
+// 3) Add a symbol layer that uses your PNGs
+if (map.getLayer(GEO_LAYER_ICONS)) map.removeLayer(GEO_LAYER_ICONS);
+map.addLayer({
+  id: GEO_LAYER_ICONS,
+  type: 'symbol',
+  source: GEO_SOURCE_ID,
+  layout: {
+    'icon-image': iconImageExpr,
+    'icon-size': 1,                // tweak size as you like
+    'icon-allow-overlap': true
+  },
+  paint: {
+    'icon-opacity': 1              // PNGs are pre-colored; icon-color won’t recolor them
+  }
+});
+
+// Put icons above the circles; and circles can stay (or set their opacity lower if you prefer)
+try { map.moveLayer(GEO_LAYER_ICONS); } catch {}
+
 const typeField  = ['get','Type'];
 
 const restTypes  = ['literal',['Restaurant','Restaurants','restaurant','restaurants']];
@@ -378,34 +472,72 @@ map.addLayer({
       document.getElementById('legend').innerHTML = `
       <b>Legend</b><br>
 
-  <!-- Icons by Type -->
-  <div style="margin:6px 0 8px 0">
-    <span style="display:inline-block;width:16px;height:16px;vertical-align:middle;margin-right:6px">🍽</span>
-    Restaurant
-    &nbsp;&nbsp;
-    <span style="display:inline-block;width:16px;height:16px;vertical-align:middle;margin:0 6px 0 12px">★</span>
-    Activity
-    &nbsp;&nbsp;
-    <span style="display:inline-block;width:16px;height:16px;vertical-align:middle;margin:0 6px 0 12px">🏕</span>
-    Hike
-    &nbsp;&nbsp;
-    <span style="display:inline-block;width:16px;height:16px;vertical-align:middle;margin:0 6px 0 12px">🛏</span>
-    Accommodation
+ // Build an icon-based legend that mirrors the map symbols
+const legend = document.getElementById('legend');
+legend.innerHTML = `
+  <div style="font-weight:700;margin-bottom:6px">Legend</div>
+
+  <!-- Types -->
+  <div style="margin-bottom:8px">
+    <div style="font-size:12px;color:#374151;margin-bottom:4px">Types</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">
+      <img src="./assets/icons/Food-Green.png"    width="16" height="16" alt="Restaurant icon">
+      <div>Restaurant</div>
+
+      <img src="./assets/icons/Activity-Blue.png" width="16" height="16" alt="Activity icon">
+      <div>Activity</div>
+
+      <img src="./assets/icons/Hike-Blue.png"     width="16" height="16" alt="Hike icon">
+      <div>Hike</div>
+
+      <img src="./assets/icons/Stay-Blue.png"     width="16" height="16" alt="Accommodation icon">
+      <div>Accommodation</div>
+    </div>
   </div>
 
-  <!-- Color by rating -->
-  <div style="font-size:12px;line-height:1.6">
-    <div><span style="display:inline-block;width:10px;height:10px;background:#10b981;margin-right:6px"></span><b>Best</b> (Restaurant: “1) Must Stop”; Others: “1) Top Tier”)</div>
-    <div><span style="display:inline-block;width:10px;height:10px;background:#34d399;margin-right:6px"></span>Restaurant: “1.5) Must Stop BUT…”</div>
-    <div><span style="display:inline-block;width:10px;height:10px;background:#0ea5e9;margin-right:6px"></span>Restaurant: “2) Go Back”; Others: “2) Worth It”</div>
-    <div><span style="display:inline-block;width:10px;height:10px;background:#f59e0b;margin-right:6px"></span>Restaurant: “3) Good 2nd Choice”; Others: “3) Meh”</div>
-    <div><span style="display:inline-block;width:10px;height:10px;background:#ef4444;margin-right:6px"></span><b>Worst</b> (Restaurant: “4) Don’t Go Back”; Others: “4) Not Worth It”)</div>
+  <!-- Restaurant rating colors -->
+  <div style="margin-bottom:8px">
+    <div style="font-size:12px;color:#374151;margin-bottom:4px">Restaurant ratings</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">
+      <img src="./assets/icons/Food-Green.png"  width="16" height="16" alt="">
+      <div><b>1)</b> Must Stop</div>
+
+      <img src="./assets/icons/Food-Teal.png"   width="16" height="16" alt="">
+      <div><b>1.5)</b> Must Stop BUT…</div>
+
+      <img src="./assets/icons/Food-Blue.png"   width="16" height="16" alt="">
+      <div><b>2)</b> Go Back</div>
+
+      <img src="./assets/icons/Food-Orange.png" width="16" height="16" alt="">
+      <div><b>3)</b> Good 2nd Choice</div>
+
+      <img src="./assets/icons/Food-Red.png"    width="16" height="16" alt="">
+      <div><b>4)</b> Don’t Go Back</div>
+    </div>
+  </div>
+
+  <!-- Activity / Hike / Accommodation rating colors -->
+  <div style="margin-bottom:6px">
+    <div style="font-size:12px;color:#374151;margin-bottom:4px">Activity / Hike / Accommodation ratings</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">
+      <img src="./assets/icons/Activity-Green.png" width="16" height="16" alt="">
+      <div><b>1)</b> Top Tier</div>
+
+      <img src="./assets/icons/Activity-Blue.png"  width="16" height="16" alt="">
+      <div><b>2)</b> Worth It</div>
+
+      <img src="./assets/icons/Activity-Orange.png" width="16" height="16" alt="">
+      <div><b>3)</b> Meh</div>
+
+      <img src="./assets/icons/Activity-Red.png"    width="16" height="16" alt="">
+      <div><b>4)</b> Not Worth It</div>
+    </div>
   </div>
 
   <!-- Isochrone hint -->
-  <div style="margin-top:8px">
-    <span style="display:inline-block;width:10px;height:10px;background:#7c3aed;margin-right:6px"></span>
-    Reachable area
+  <div style="font-size:12px;display:flex;align-items:center;gap:8px">
+    <span style="display:inline-block;width:12px;height:12px;background:#7c3aed;border-radius:2px"></span>
+    Reachable area (within selected minutes)
   </div>
 `;
 
