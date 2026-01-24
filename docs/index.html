@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Didius Travel Map — Points Debug + Separate Search</title>
+<title>Didius Travel Map — Unified Search Placement</title>
 
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet" />
 <link href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.css" rel="stylesheet" />
@@ -14,22 +14,29 @@
   #map{height:100vh;width:100%}
 
   .panel{
-    position:absolute;z-index:6;left:12px;top:90px;
+    position:absolute;z-index:6;left:12px;top:12px;
     background:#fff;padding:10px 12px;border-radius:12px;border:1px solid #e5e7eb;
     box-shadow:0 6px 20px rgba(0,0,0,.12);
-    display:flex;gap:8px;align-items:center;flex-wrap:wrap;max-width:420px
+    display:flex;gap:8px;align-items:center;flex-wrap:wrap;max-width:520px
   }
   .panel label{font-size:12px;color:#111827}
-  .panel input[type="range"]{width:150px}
+  .panel input[type="range"]{width:180px}
   .pill{border:1px solid #e5e7eb;border-radius:999px;padding:4px 10px;font-size:12px;background:#f8fafc;cursor:pointer}
   .sep{width:1px;height:26px;background:#e5e7eb;display:inline-block;margin:0 2px}
 
-  .mapboxgl-ctrl{ z-index:7 }
-  .mapboxgl-ctrl-top-right{ margin:12px }
-  .mapboxgl-ctrl-top-left{  margin:12px }
+  /* Search mount area under the distance control */
+  .search-wrap{width:100%;display:flex;flex-direction:column;gap:8px;margin-top:6px}
+  .search-row{width:100%}
+  .search-row.hidden{display:none}
+
+  /* Make embedded controls span full width and look tidy inside panel */
+  .search-row .mapboxgl-ctrl-geocoder,
+  .search-row .mapboxgl-ctrl-directions { width:100%; max-width:100% }
+  .search-row .mapboxgl-ctrl-geocoder .mapboxgl-ctrl-geocoder--input{ font-size:12px }
+  .search-row .mapboxgl-ctrl-directions .mapboxgl-ctrl{ box-shadow:none }
+
+  /* Keep native map controls separate on map */
   .mapboxgl-ctrl-bottom-right{ margin:12px }
-  .mapboxgl-ctrl-directions{ max-width:420px }
-  .mapboxgl-ctrl-geocoder{ min-width:320px;font-size:12px }
 
   #legend{
     position:absolute;left:12px;bottom:12px;background:#fff;
@@ -37,8 +44,9 @@
     box-shadow:0 6px 20px rgba(0,0,0,.12);z-index:2
   }
   #err{
-    position:absolute;left:12px;top:12px;background:#fff;border:1px solid #e5e7eb;
-    border-radius:10px;padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.12);
+    position:absolute;left:12px;top:calc(12px + 90px);
+    background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+    padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.12);
     font-size:12px;max-width:70ch;display:none;z-index:8;white-space:pre-wrap
   }
   #dbg{
@@ -78,6 +86,12 @@
     <input id="fitToggle" type="checkbox" />
     Fit view to area
   </label>
+
+  <!-- Mount area for both search boxes, stacked directly below distance -->
+  <div class="search-wrap">
+    <div id="singleMount" class="search-row"></div>
+    <div id="routeMount"  class="search-row hidden"></div>
+  </div>
 </div>
 
 <div id="map" aria-label="Interactive map"></div>
@@ -85,10 +99,13 @@
 <div id="err"></div>
 <div id="dbg">Visible points: <span id="visCount">0</span></div>
 
+<!-- Core libs -->
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.js"></script>
+<!-- Plugins -->
 <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.js"></script>
 <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-geocoder/v5.0.1/mapbox-gl-geocoder.min.js"></script>
 
+<!-- Fallbacks if CDN fails -->
 <script>
 (function ensurePlugins(){
   function add(src){ var s=document.createElement('script'); s.src=src; s.defer=false; s.async=false; document.body.appendChild(s); }
@@ -126,6 +143,8 @@
   const fitToggle=document.getElementById('fitToggle');
   const errBox=document.getElementById('err');
   const visOut=document.getElementById('visCount');
+  const singleMount=document.getElementById('singleMount');
+  const routeMount=document.getElementById('routeMount');
 
   function showErr(msg){ errBox.style.display='block'; errBox.textContent=msg; }
   function clearErr(){ errBox.style.display='none'; errBox.textContent=''; }
@@ -140,47 +159,41 @@
   ['dragstart','zoomstart','rotatestart','pitchstart'].forEach(ev=> map.on(ev,()=> userInteracting=true));
   ['dragend','zoomend','rotateend','pitchend'].forEach(ev=> map.on(ev,()=> userInteracting=false));
 
-  // ===== HOISTED STATE (fixes the ReferenceError) =====
-  let originLngLat = null;     // moved up
-  let originMarker = null;     // moved up
-  let currentRouteLine = null; // moved up
-  let currentIsoFeature = null;// moved up
+  // ===== HOISTED STATE =====
+  let originLngLat = null;
+  let originMarker = null;
+  let currentRouteLine = null;
+  let currentIsoFeature = null;
 
-  // ===== GEOCODER (top-left) =====
+  // ===== Instantiate controls (not in corners) =====
   const geocoder = new MapboxGeocoder({
     accessToken: mapboxgl.accessToken, mapboxgl, marker:false,
     placeholder:'Search a place (Single point)', proximity:{ longitude:-80, latitude:40 }
   });
-  map.addControl(geocoder, 'top-left');
 
-  // ===== DIRECTIONS (top-right) =====
   const directions=new MapboxDirections({
     accessToken: mapboxgl.accessToken, profile:'mapbox/driving', unit:'imperial',
     alternatives:true, controls:{ instructions:true, inputs:true, profileSwitcher:true },
     interactive:false, draggable:false, geometries:'geojson'
   });
-  map.addControl(directions, 'top-right');
 
-  function geocoderEl(){ return document.querySelector('.mapboxgl-ctrl-top-left .mapboxgl-ctrl-geocoder'); }
-  function directionsEl(){ return document.querySelector('.mapboxgl-ctrl-top-right .mapboxgl-ctrl-directions'); }
+  // Attach both controls to the panel area
+  // Use their onAdd(map) to get the DOM element then mount into our container
+  const geoEl = geocoder.onAdd(map);
+  const dirEl = directions.onAdd(map);
+  singleMount.appendChild(geoEl);
+  routeMount.appendChild(dirEl);
+
+  // Keep map’s internal reference consistent (no need to addControl)
   function currentUXMode(){ return (document.querySelector('input[name="uxmode"]:checked')?.value) || 'point'; }
-
-  function maybeEnableApply(){
-    // Defensive: only enable if needed state exists
-    const hasOrigin = !!(originLngLat && Number.isFinite(originLngLat.lng) && Number.isFinite(originLngLat.lat));
-    const hasRoute  = !!(getActiveRouteLine()?.coordinates?.length);
-    applyBtn.disabled = currentUXMode()==='point' ? !hasOrigin : !hasRoute;
-  }
-
-  function updateControlVisibility(){
+  function toggleSearchBoxes(){
     const ux=currentUXMode();
-    const g=geocoderEl(), d=directionsEl();
-    if (g) g.style.display = (ux==='point') ? 'block' : 'none';
-    if (d) d.style.display = (ux==='route') ? 'block' : 'none';
+    singleMount.classList.toggle('hidden', ux!=='point');
+    routeMount.classList.toggle('hidden',  ux!=='route');
     maybeEnableApply();
   }
-  Array.from(document.querySelectorAll('input[name="uxmode"]')).forEach(r=> r.addEventListener('change', updateControlVisibility));
-  updateControlVisibility();
+  Array.from(document.querySelectorAll('input[name="uxmode"]')).forEach(r=> r.addEventListener('change', toggleSearchBoxes));
+  toggleSearchBoxes();
 
   // ===== DATA =====
   map.on('load', async ()=>{
@@ -203,7 +216,7 @@
       const pushPoint=(lon,lat,props)=>{
         let x=Number(lon), y=Number(lat);
         if(!Number.isFinite(x)||!Number.isFinite(y)) return false;
-        if(Math.abs(x)<=90 && Math.abs(y)>90) [x,y]=[y,x]; // swap if flipped
+        if(Math.abs(x)<=90 && Math.abs(y)>90) [x,y]=[y,x];
         if(x<-180||x>180||y<-90||y>90) return false;
         norm.push({ type:'Feature', geometry:{ type:'Point', coordinates:[x,y] }, properties:props||{} });
         return true;
@@ -235,12 +248,8 @@
         }
       }
 
-      console.log('[DATA] raw features length:',
-        (Array.isArray(raw?.features) ? raw.features.length :
-        (Array.isArray(raw) ? raw.length : 'n/a')),
-        'normalized length:', norm.length);
-
-      if(!norm.length) throw new Error('No valid point features found in places.geojson. Check Lat/Long names and that coordinates are numbers.');
+      console.log('[DATA] normalized length:', norm.length);
+      if(!norm.length) throw new Error('No valid point features found in places.geojson.');
 
       const gj={ type:'FeatureCollection', features:norm };
 
@@ -288,8 +297,6 @@
       map.on('mouseleave', GEO_LAYER_ID, ()=> map.getCanvas().style.cursor='');
 
       updateVisibleCount(); map.on('moveend', updateVisibleCount);
-      console.log('[DATA] Layer added. queryRenderedFeatures count:',
-        map.queryRenderedFeatures({layers:[GEO_LAYER_ID]}).length);
 
       document.getElementById('legend').innerHTML = `
         <b>Legend</b><br>
@@ -399,6 +406,11 @@
     try{ visOut.textContent=String(map.queryRenderedFeatures({layers:[GEO_LAYER_ID]}).length); }
     catch{ visOut.textContent='n/a'; }
   }
+  function maybeEnableApply(){
+    const hasOrigin = !!(originLngLat && Number.isFinite(originLngLat.lng) && Number.isFinite(originLngLat.lat));
+    const hasRoute  = !!(getActiveRouteLine()?.coordinates?.length);
+    applyBtn.disabled = currentUXMode()==='point' ? !hasOrigin : !hasRoute;
+  }
 
   // ===== Apply / Clear =====
   applyBtn.addEventListener('click', async ()=>{
@@ -438,3 +450,4 @@
 </script>
 </body>
 </html>
+
