@@ -3,16 +3,14 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Didius Travel Map — Point + Route Modes</title>
+<title>Didius Travel Map — Point + Route (Compact UI)</title>
 
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet">
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.js"></script>
 
-<!-- Directions (for route mode) -->
 <link href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.css" rel="stylesheet">
 <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.js"></script>
 
-<!-- Geocoder (for single-point mode) -->
 <link rel="stylesheet" href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-geocoder/v5.0.1/mapbox-gl-geocoder.css" />
 <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-geocoder/v5.0.1/mapbox-gl-geocoder.min.js"></script>
 
@@ -21,22 +19,39 @@
 <style>
   html,body{height:100%;margin:0;font-family:system-ui,Inter,Arial}
   #map{height:100vh;width:100%}
-  .panel{position:absolute;z-index:3;left:12px;top:12px;background:#fff;padding:10px 12px;border-radius:12px;border:1px solid #e5e7eb;box-shadow:0 6px 20px rgba(0,0,0,.12);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+  /* Compact, left-aligned panel that won’t cover top-right controls */
+  .panel{
+    position:absolute;z-index:3;left:12px;top:12px;background:#fff;
+    padding:10px 12px;border-radius:12px;border:1px solid #e5e7eb;
+    box-shadow:0 6px 20px rgba(0,0,0,.12);
+    display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+    max-width:420px
+  }
   .panel label{font-size:12px;color:#111827}
-  .panel input[type="range"]{width:160px}
+  .panel input[type="range"]{width:150px}
   .pill{border:1px solid #e5e7eb;border-radius:999px;padding:4px 10px;font-size:12px;background:#f8fafc;cursor:pointer}
+  .sep{width:1px;height:26px;background:#e5e7eb;display:inline-block;margin:0 2px}
+  .stack{display:flex;flex-direction:column;gap:6px}
+
+  /* Put zoom/compass bottom-right so nothing overlaps them */
+  .mapboxgl-ctrl-bottom-right{margin:12px}
+  .mapboxgl-ctrl-top-right{margin:12px}
+
   #legend{position:absolute;right:12px;top:12px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.12);z-index:2}
   #err{position:absolute;left:12px;bottom:12px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.12);font-size:12px;max-width:70ch;display:none;z-index:4;white-space:pre-wrap}
   #dbg{position:absolute;right:12px;bottom:12px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:6px 8px;font-size:12px;z-index:4}
-  .mapboxgl-ctrl-top-right{margin-top:8px}
   button:disabled{opacity:.5;cursor:not-allowed}
-  .sep{width:1px;height:26px;background:#e5e7eb;display:inline-block;margin:0 2px}
+
+  /* Geocoder embedded in panel */
+  #geocoderBox{min-width:260px;flex:1}
+  .mapboxgl-ctrl-geocoder{min-width:260px;font-size:12px}
 </style>
 </head>
 <body>
 
 <div class="panel">
-  <span class="pill" title="Choose how to search">
+  <span class="pill">
     Mode:
     <label style="margin-left:6px"><input type="radio" name="uxmode" value="point" checked> Single point</label>
     <label><input type="radio" name="uxmode" value="route"> Route</label>
@@ -58,6 +73,7 @@
 
   <button id="applyBtn" class="pill" disabled>Apply</button>
   <button id="clearIso" class="pill">Clear</button>
+
   <label class="pill" style="background:#fff">
     <input id="fitToggle" type="checkbox" />
     Fit view to area
@@ -65,7 +81,12 @@
 
   <span class="sep"></span>
 
-  <button id="useCenter" class="pill" title="Use current map center (single-point mode)">Use map center</button>
+  <div class="stack" id="pointUi">
+    <div id="geocoderBox"></div>
+    <div>
+      <button id="useCenter" class="pill" title="Use current map center">Use map center</button>
+    </div>
+  </div>
 </div>
 
 <div id="map" aria-label="Interactive map"></div>
@@ -78,7 +99,9 @@
 mapboxgl.accessToken = 'pk.eyJ1IjoiYnJhZDEzbWFydGluIiwiYSI6ImNta2p6eHI5MzE4YzAzY282aXE4Mjhxc3QifQ.tkosuQGdRkfSMoRVWCakbg';
 const STYLE_URL = 'mapbox://styles/brad13martin/cmkjztnvs001u01qm6lsmeold';
 
+// Use absolute path so GitHub Pages always finds it
 const GEO_PATH  = '/travel-map/data/places.geojson';
+
 const GEO_SOURCE_ID = 'places-geo';
 const GEO_LAYER_ID  = 'places-geo-points';
 const ISO_SOURCE_ID = 'iso-source';
@@ -86,7 +109,7 @@ const ISO_LAYER_FILL = 'iso-fill';
 const ISO_LAYER_LINE = 'iso-line';
 
 const AVG_SPEED_KMH = { driving: 65, walking: 5, cycling: 18 };
-const MAX_SAMPLES_HARD = 60; // for route corridor
+const MAX_SAMPLES_HARD = 60;
 
 // ====== UI refs ======
 const minsInput = document.getElementById('mins');
@@ -97,17 +120,9 @@ const fitToggle = document.getElementById('fitToggle');
 const useCenter = document.getElementById('useCenter');
 const errBox    = document.getElementById('err');
 const visOut    = document.getElementById('visCount');
+const pointUi   = document.getElementById('pointUi');
 
-const modeRadios = Array.from(document.querySelectorAll('input[name="mode"]'));
 const uxRadios   = Array.from(document.querySelectorAll('input[name="uxmode"]'));
-
-minsInput.addEventListener('input', () => minsVal.textContent = minsInput.value);
-function showErr(msg){ errBox.style.display='block'; errBox.textContent = msg; }
-function clearErr(){ errBox.style.display='none'; errBox.textContent=''; }
-
-// Track user interactions to avoid refits while they pan
-let userInteracting = false;
-let hasFitOnce = false;
 
 // ====== MAP ======
 const map = new mapboxgl.Map({
@@ -116,9 +131,13 @@ const map = new mapboxgl.Map({
   center: [-80, 40],
   zoom: 5
 });
-map.addControl(new mapboxgl.NavigationControl());
+
+// Move zoom/compass to bottom-right to avoid overlap
+map.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
 map.on('error', ev => showErr('Mapbox: ' + (ev?.error?.message || JSON.stringify(ev))));
 
+let userInteracting = false;
+let hasFitOnce = false;
 ['dragstart','zoomstart','rotatestart','pitchstart'].forEach(ev =>
   map.on(ev, () => { userInteracting = true; })
 );
@@ -126,16 +145,22 @@ map.on('error', ev => showErr('Mapbox: ' + (ev?.error?.message || JSON.stringify
   map.on(ev, () => { userInteracting = false; })
 );
 
-// ====== CONTROLS: Geocoder (for point mode) and Directions (for route mode) ======
+function showErr(msg){ errBox.style.display='block'; errBox.textContent = msg; }
+function clearErr(){ errBox.style.display='none'; errBox.textContent=''; }
+minsInput.addEventListener('input', () => minsVal.textContent = minsInput.value);
+
+// ====== GEOCODER (embedded in panel) ======
 const geocoder = new MapboxGeocoder({
   accessToken: mapboxgl.accessToken,
   mapboxgl: mapboxgl,
   marker: false,
-  placeholder: 'Search a place (single-point mode)',
+  placeholder: 'Search a place (Single point)',
   proximity: { longitude: -80, latitude: 40 }
 });
-map.addControl(geocoder, 'top-right');
+// Mount geocoder into our panel container
+document.getElementById('geocoderBox').appendChild(geocoder.onAdd(map));
 
+// ====== DIRECTIONS (kept in top-right; compact) ======
 const directions = new MapboxDirections({
   accessToken: mapboxgl.accessToken,
   profile: 'mapbox/driving',
@@ -148,18 +173,13 @@ const directions = new MapboxDirections({
 });
 map.addControl(directions, 'top-right');
 
-// Toggle which UI is visible based on mode radio
+// Toggle panel sub-UI (search box shows only in Single point mode)
+function currentUXMode(){ return (document.querySelector('input[name="uxmode"]:checked')?.value) || 'point'; }
 function updateControlVisibility(){
   const ux = currentUXMode();
-  const dirCtrl = document.querySelector('.mapboxgl-ctrl-directions');
-  const geoCtrl = document.querySelector('.mapboxgl-ctrl-geocoder');
-  if (geoCtrl) geoCtrl.style.display = ux === 'point' ? 'block' : 'none';
-  if (dirCtrl) dirCtrl.style.display = ux === 'route' ? 'block' : 'none';
-  // Buttons
-  useCenter.style.display = ux === 'point' ? 'inline-block' : 'none';
+  pointUi.style.display = ux === 'point' ? 'flex' : 'none';
 }
 uxRadios.forEach(r => r.addEventListener('change', updateControlVisibility));
-function currentUXMode(){ return (document.querySelector('input[name="uxmode"]:checked')?.value) || 'point'; }
 updateControlVisibility();
 
 // ====== DATA LAYERS ======
@@ -175,12 +195,14 @@ map.on('load', async () => {
   map.moveLayer(ISO_LAYER_FILL);
   map.moveLayer(ISO_LAYER_LINE);
 
-  // Load your places, normalize aggressively
   try {
     const resp = await fetch(GEO_PATH, { cache: 'no-store' });
     if (!resp.ok) throw new Error(`Fetch failed: ${resp.status} ${resp.statusText}`);
+    console.log('GeoJSON HTTP status:', resp.status);
     const raw = await resp.json();
+    console.log('Loaded raw object:', raw);
 
+    // Normalize to Point features
     let feats = [];
     let interpretAsRows = false;
 
@@ -283,7 +305,6 @@ map.on('load', async () => {
       <span style="display:inline-block;width:10px;height:10px;background:#7c3aed;margin-right:6px"></span>Reachable area
     `;
 
-    // Count on pan
     updateVisibleCount();
     map.on('moveend', updateVisibleCount);
 
@@ -329,7 +350,6 @@ directions.on('route', e => {
   maybeEnableApply();
 });
 
-// Stronger getter flattens MultiLineString to one LineString spanning all coordinates
 function getActiveRouteLine() {
   if (currentRouteLine?.coordinates?.length) return currentRouteLine;
   try {
@@ -356,15 +376,7 @@ map.on('sourcedata', e => {
   maybeEnableApply();
 });
 
-// Block map clicks from switching A/B if plugin enters placing state
-map.on('click', (e) => {
-  if (currentUXMode() !== 'route') return;
-  const box = document.querySelector('.mapboxgl-ctrl-directions');
-  const placing = box && (box.classList.contains('is-placing') || box.classList.contains('directions-placing'));
-  if (placing) e.originalEvent.stopImmediatePropagation();
-});
-
-// ====== COMMON: ISOCHRONE / CORRIDOR ======
+// ====== ISOCHRONE HELPERS ======
 async function fetchIso(lng, lat, minutes, profile){
   const url = new URL(`https://api.mapbox.com/isochrone/v1/mapbox/${profile}/${lng},${lat}`);
   url.searchParams.set('contours_minutes', String(minutes));
@@ -382,7 +394,7 @@ async function buildRouteCorridor(line, minutes, profile){
   if (!isFinite(lineKm) || lineKm <= 0) throw new Error('Route length is zero.');
 
   const r_km = (AVG_SPEED_KMH[profile] || 65) * (minutes/60);
-  let spacingKm = Math.max(0.5 * r_km, 1); // denser than radius
+  let spacingKm = Math.max(0.5 * r_km, 1);
   let count = Math.ceil(lineKm / spacingKm);
   if (count > MAX_SAMPLES_HARD) { count = MAX_SAMPLES_HARD; spacingKm = lineKm / count; }
 
@@ -392,7 +404,6 @@ async function buildRouteCorridor(line, minutes, profile){
     const pt = turf.along(line, d, { units:'kilometers' });
     samples.push(pt.geometry.coordinates);
   }
-  // ensure the very end is included
   samples[samples.length - 1] = line.coordinates[line.coordinates.length - 1];
 
   let unionGeom = null;
