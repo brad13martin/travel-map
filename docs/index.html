@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Didius Travel Map — Identical Boxes (Destination Hidden in Single)</title>
+<title>Didius Travel Map — Single uses “Location”</title>
 
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet" />
 <link href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.css" rel="stylesheet" />
@@ -26,18 +26,16 @@
   .search-wrap{width:100%;display:flex;flex-direction:column;gap:8px;margin-top:6px}
   .search-row{width:100%}
   .search-row.hidden{display:none}
-
-  /* Make embedded directions controls span full width inside panel */
   .search-row .mapboxgl-ctrl-directions{ width:100%; max-width:100% }
-  .search-row .directions-control{ box-shadow:none } /* inner card cleanup */
+  .search-row .directions-control{ box-shadow:none }
 
-  /* SINGLE mode: hide Destination field, keep look identical otherwise */
+  /* Single: hide destination row */
   .single-like .mapbox-directions-destination{ display:none !important; }
-  /* Optional: hide turn-by-turn + summary (can comment out if you want them) */
+  /* Optional: hide turn-by-turn in single */
   .single-like .mapbox-directions-instructions,
   .single-like .mapbox-directions-route-summary{ display:none !important; }
 
-  .mapboxgl-ctrl-bottom-right{ margin:12px } /* keep zoom/compass tidy */
+  .mapboxgl-ctrl-bottom-right{ margin:12px }
 
   #legend{
     position:absolute;left:12px;bottom:12px;background:#fff;
@@ -88,7 +86,6 @@
     Fit view to area
   </label>
 
-  <!-- Stacked, identical-looking boxes -->
   <div class="search-wrap">
     <div id="singleMount" class="search-row single-like"></div>
     <div id="routeMount"  class="search-row hidden"></div>
@@ -144,8 +141,7 @@
   let currentRouteLine = null;
   let currentIsoFeature = null;
 
-  // ===== TWO IDENTICAL DIRECTIONS CONTROLS =====
-  // Single: we’ll hide destination via CSS and prevent accidental routing
+  // ===== DIRECTIONS CONTROLS (identical look) =====
   const singleDir = new MapboxDirections({
     accessToken: mapboxgl.accessToken, profile:'mapbox/driving', unit:'imperial',
     alternatives:false, controls:{ instructions:false, inputs:true, profileSwitcher:true },
@@ -154,7 +150,6 @@
   const singleEl = singleDir.onAdd(map);
   singleMount.appendChild(singleEl);
 
-  // Route: normal A→B box
   const routeDir = new MapboxDirections({
     accessToken: mapboxgl.accessToken, profile:'mapbox/driving', unit:'imperial',
     alternatives:true, controls:{ instructions:true, inputs:true, profileSwitcher:true },
@@ -163,25 +158,77 @@
   const routeEl = routeDir.onAdd(map);
   routeMount.appendChild(routeEl);
 
-  // Mode switcher toggles visibility
+  // Patch Single labels to “Location”
+  function patchSingleLabels(){
+    // Placeholder
+    const originInput = singleMount.querySelector('.mapbox-directions-origin input[type="text"]');
+    if (originInput) originInput.placeholder = 'Location';
+    // Replace the badge "A" with "Location"
+    const badges = singleMount.querySelectorAll('span,div');
+    for (const el of badges){
+      const t=(el.textContent||'').trim();
+      if (t==='A' && /directions|mapbox/i.test(el.className||'')){
+        el.textContent='Location';
+        el.style.fontSize='12px';
+        el.style.fontWeight='600';
+        break;
+      }
+    }
+  }
+  singleDir.on('load', patchSingleLabels);
+  singleDir.on('origin', patchSingleLabels);
+  singleDir.on('profile', patchSingleLabels);
+  singleDir.on('clear', patchSingleLabels);
+  setTimeout(patchSingleLabels, 60);
+
+  // Prevent Single from holding a destination
+  singleDir.on('destination', ()=> { try{ singleDir.setDestination(''); }catch{} });
+
+  // Geocode helper for single mode
+  async function geocodeQuery(q){
+    const url = new URL(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`);
+    url.searchParams.set('access_token', mapboxgl.accessToken);
+    url.searchParams.set('limit','1');
+    const r = await fetch(url.toString());
+    if(!r.ok) throw new Error(`Geocode ${r.status}`);
+    const j = await r.json();
+    const f = j.features?.[0];
+    if(!f?.center) throw new Error('No results for that location.');
+    return {lng:f.center[0], lat:f.center[1]};
+  }
+
+  // Mode switcher toggles boxes
   function currentUXMode(){ return (document.querySelector('input[name="uxmode"]:checked')?.value) || 'point'; }
   function toggleBoxes(){
     const ux=currentUXMode();
     singleMount.classList.toggle('hidden', ux!=='point');
     routeMount.classList.toggle('hidden',  ux!=='route');
+    patchSingleLabels();
     maybeEnableApply();
   }
   document.querySelectorAll('input[name="uxmode"]').forEach(r=> r.addEventListener('change', toggleBoxes));
   toggleBoxes();
 
-  // Keep Single from auto-routing: if destination gets set somehow, clear it.
-  singleDir.on('destination', ()=> {
-    try{ singleDir.setDestination(''); }catch{}
+  // Enable Apply based on inputs
+  function maybeEnableApply(){
+    const ux=currentUXMode();
+    if (ux==='point'){
+      const originInput = singleMount.querySelector('.mapbox-directions-origin input[type="text"]');
+      applyBtn.disabled = !(originInput && originInput.value.trim().length>0);
+    }else{
+      const hasO = !!routeDir.getOrigin();
+      const hasD = !!routeDir.getDestination();
+      applyBtn.disabled = !(hasO && hasD);
+    }
+  }
+  // Watch typing in single origin
+  document.addEventListener('input', (e)=>{
+    if (currentUXMode()==='point' && e.target && e.target.closest('.mapbox-directions-origin')){
+      maybeEnableApply();
+    }
   });
-  // Update Apply enablement when origin typed/selected
-  singleDir.on('origin', maybeEnableApply);
-
-  // Capture active route from route box
+  routeDir.on('origin', maybeEnableApply);
+  routeDir.on('destination', maybeEnableApply);
   routeDir.on('route', e=>{
     try{
       const r=e?.route?.[0];
@@ -191,34 +238,6 @@
     }catch{ currentRouteLine=null; }
     maybeEnableApply();
   });
-
-  function getSingleOriginLngLat(){
-    try{
-      const o = singleDir.getOrigin(); // { geometry: {coordinates:[lng,lat]} , ... }
-      const c = o && o.geometry && o.geometry.coordinates;
-      if(Array.isArray(c) && c.length===2 && isFinite(c[0]) && isFinite(c[1])) return {lng:c[0], lat:c[1]};
-    }catch{}
-    return null;
-  }
-
-  function getActiveRouteLine(){
-    if(currentRouteLine?.coordinates?.length) return currentRouteLine;
-    try{
-      const src=map.getSource('directions'); // plugin source name
-      const data=src && (src._data || (src.serialize && src.serialize().data));
-      if(!data?.features?.length) return null;
-      const all=[];
-      for(const f of data.features){
-        if(!f.geometry) continue;
-        if(f.geometry.type==='LineString' && f.geometry.coordinates?.length>1) all.push(...f.geometry.coordinates);
-        else if(f.geometry.type==='MultiLineString' && Array.isArray(f.geometry.coordinates)){
-          for(const seg of f.geometry.coordinates) if(Array.isArray(seg)&&seg.length>1) all.push(...seg);
-        }
-      }
-      if(all.length>1) return { type:'LineString', coordinates:all };
-    }catch{}
-    return null;
-  }
 
   // ===== DATA =====
   map.on('load', async ()=>{
@@ -285,9 +304,10 @@
       });
       map.setFilter(GEO_LAYER_ID, null);
 
-      const firstSymbol = (map.getStyle().layers||[]).find(l => l.type==='symbol')?.id;
-      if (firstSymbol) try { map.moveLayer(GEO_LAYER_ID, firstSymbol); } catch {}
+      // Put points ON TOP so they’re visible
+      try { map.moveLayer(GEO_LAYER_ID); } catch {}
 
+      // Fit to points once
       try{
         const b=turf.bbox(gj);
         if(b&&isFinite(b[0])&&b[0]!==b[2]&&b[1]!==b[3]){
@@ -361,7 +381,7 @@
     return unionGeom;
   }
 
-  // ===== Filtering & counters =====
+  // ===== Filter & counters =====
   function applyIsoFilter(featureOrNull){
     if(!map.getLayer(GEO_LAYER_ID)) return;
     if(featureOrNull){
@@ -378,31 +398,45 @@
     try{ visOut.textContent=String(map.queryRenderedFeatures({layers:[GEO_LAYER_ID]}).length); }
     catch{ visOut.textContent='n/a'; }
   }
-  function maybeEnableApply(){
-    const ux=currentUXMode();
-    const originOK = !!(ux==='point' ? getSingleOriginLngLat()
-                                      : (routeDir.getOrigin() && routeDir.getDestination()));
-    applyBtn.disabled = !originOK;
-  }
 
   // ===== Apply / Clear =====
   applyBtn.addEventListener('click', async ()=>{
     clearErr();
     const minutes=Number(minsInput.value||15);
     const profile=(document.querySelector('input[name="mode"]:checked')?.value||'driving');
+
     try{
       if(currentUXMode()==='point'){
-        const o=getSingleOriginLngLat();
-        if(!o) throw new Error('Enter an origin.');
+        const originInput = singleMount.querySelector('.mapbox-directions-origin input[type="text"]');
+        if(!originInput || !originInput.value.trim()) throw new Error('Enter a Location.');
+        const o = await geocodeQuery(originInput.value.trim());
         const gj=await fetchIso(o.lng,o.lat,minutes,profile);
         const feat=gj.features?.[0]; if(!feat) throw new Error('No isochrone returned.');
         currentIsoFeature=feat;
       }else{
-        const line=getActiveRouteLine();
+        const line = (function getActiveRouteLine(){
+          if(currentRouteLine?.coordinates?.length) return currentRouteLine;
+          try{
+            const src=map.getSource('directions');
+            const data=src && (src._data || (src.serialize && src.serialize().data));
+            if(!data?.features?.length) return null;
+            const all=[];
+            for(const f of data.features){
+              if(!f.geometry) continue;
+              if(f.geometry.type==='LineString' && f.geometry.coordinates?.length>1) all.push(...f.geometry.coordinates);
+              else if(f.geometry.type==='MultiLineString' && Array.isArray(f.geometry.coordinates)){
+                for(const seg of f.geometry.coordinates) if(Array.isArray(seg)&&seg.length>1) all.push(...seg);
+              }
+            }
+            if(all.length>1) return { type:'LineString', coordinates:all };
+          }catch{}
+          return null;
+        })();
         if(!line) throw new Error('Enter start and destination and wait for the route to draw.');
         const corridorGeom=await buildRouteCorridor(line,minutes,profile);
         currentIsoFeature={ type:'Feature', geometry:corridorGeom, properties:{} };
       }
+
       map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features:[currentIsoFeature] });
       applyIsoFilter(currentIsoFeature);
 
@@ -418,9 +452,11 @@
     clearErr(); currentIsoFeature=null; hasFitOnce=false;
     if(map.getSource(ISO_SOURCE_ID)) map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features:[] });
     applyIsoFilter(null);
-    // Also clear inputs for clarity
     try{ singleDir.setOrigin(''); }catch{}
     try{ routeDir.setOrigin(''); routeDir.setDestination(''); }catch{}
+    // Also clear the single input box text
+    const originInput = singleMount.querySelector('.mapbox-directions-origin input[type="text"]');
+    if (originInput) originInput.value='';
     maybeEnableApply();
   });
 
