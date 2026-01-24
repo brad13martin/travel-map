@@ -455,20 +455,20 @@ map.on('click', GEO_LAYER_ICONS, e=>{
   // Map rating -> colored badge text/class
   function restaurantBadge(txt){
     switch(txt){
-      case '1) Must Stop':               return badge('Must Stop','b-green');
-      case '1.5) Must Stop BUT…':        return badge('Must Stop (but…)','b-teal');
-      case '2) Go Back':                 return badge('Go Back','b-blue');
-      case '3) Good 2nd Choice':         return badge('Good 2nd Choice','b-amber');
-      case '4) Don’t Go Back':           return badge('Don’t Go Back','b-red');
+      case '1) Must Stop':               return badge('1) Must Stop','b-green');
+      case '1.5) Must Stop BUT…':        return badge('1.5 Must Stop (but…)','b-teal');
+      case '2) Go Back':                 return badge('2) Go Back','b-blue');
+      case '3) Good 2nd Choice':         return badge('3) Good 2nd Choice','b-amber');
+      case '4) Don’t Go Back':           return badge('4) Don’t Go Back','b-red');
       default:                           return '';
     }
   }
   function otherBadge(txt){
     switch(txt){
-      case '1) Top Tier':                return badge('Top Tier','b-green');
-      case '2) Worth It':                return badge('Worth It','b-blue');
-      case '3) Meh':                     return badge('Meh','b-amber');
-      case '4) Not Worth It':            return badge('Not Worth It','b-red');
+      case '1) Top Tier':                return badge('1) Top Tier','b-green');
+      case '2) Worth It':                return badge('2) Worth It','b-blue');
+      case '3) Meh':                     return badge('3) Meh','b-amber');
+      case '4) Not Worth It':            return badge('4) Not Worth It','b-red');
       default:                           return '';
     }
   }
