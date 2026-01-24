@@ -50,7 +50,6 @@
 </head>
 <body>
 
-<!-- Compact settings panel -->
 <div class="panel">
   <span class="pill">
     Mode:
@@ -86,14 +85,10 @@
 <div id="err"></div>
 <div id="dbg">Visible points: <span id="visCount">0</span></div>
 
-<!-- Core libs -->
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.js"></script>
-
-<!-- Plugins -->
 <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.js"></script>
 <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-geocoder/v5.0.1/mapbox-gl-geocoder.min.js"></script>
 
-<!-- Fallbacks if CDN fails -->
 <script>
 (function ensurePlugins(){
   function add(src){ var s=document.createElement('script'); s.src=src; s.defer=false; s.async=false; document.body.appendChild(s); }
@@ -116,13 +111,10 @@
   // ===== CONFIG =====
   mapboxgl.accessToken = 'pk.eyJ1IjoiYnJhZDEzbWFydGluIiwiYSI6ImNta2p6eHI5MzE4YzAzY282aXE4Mjhxc3QifQ.tkosuQGdRkfSMoRVWCakbg';
   const STYLE_URL = 'mapbox://styles/brad13martin/cmkjztnvs001u01qm6lsmeold';
-
-  // Use absolute URL to remove path ambiguity on GitHub Pages
   const GEO_PATH  = 'https://brad13martin.github.io/travel-map/data/places.geojson';
 
   const GEO_SOURCE_ID='places-geo', GEO_LAYER_ID='places-geo-points';
   const ISO_SOURCE_ID='iso-source', ISO_LAYER_FILL='iso-fill', ISO_LAYER_LINE='iso-line';
-
   const AVG_SPEED_KMH={driving:65,walking:5,cycling:18};
   const MAX_SAMPLES_HARD=60;
 
@@ -148,6 +140,12 @@
   ['dragstart','zoomstart','rotatestart','pitchstart'].forEach(ev=> map.on(ev,()=> userInteracting=true));
   ['dragend','zoomend','rotateend','pitchend'].forEach(ev=> map.on(ev,()=> userInteracting=false));
 
+  // ===== HOISTED STATE (fixes the ReferenceError) =====
+  let originLngLat = null;     // moved up
+  let originMarker = null;     // moved up
+  let currentRouteLine = null; // moved up
+  let currentIsoFeature = null;// moved up
+
   // ===== GEOCODER (top-left) =====
   const geocoder = new MapboxGeocoder({
     accessToken: mapboxgl.accessToken, mapboxgl, marker:false,
@@ -166,6 +164,14 @@
   function geocoderEl(){ return document.querySelector('.mapboxgl-ctrl-top-left .mapboxgl-ctrl-geocoder'); }
   function directionsEl(){ return document.querySelector('.mapboxgl-ctrl-top-right .mapboxgl-ctrl-directions'); }
   function currentUXMode(){ return (document.querySelector('input[name="uxmode"]:checked')?.value) || 'point'; }
+
+  function maybeEnableApply(){
+    // Defensive: only enable if needed state exists
+    const hasOrigin = !!(originLngLat && Number.isFinite(originLngLat.lng) && Number.isFinite(originLngLat.lat));
+    const hasRoute  = !!(getActiveRouteLine()?.coordinates?.length);
+    applyBtn.disabled = currentUXMode()==='point' ? !hasOrigin : !hasRoute;
+  }
+
   function updateControlVisibility(){
     const ux=currentUXMode();
     const g=geocoderEl(), d=directionsEl();
@@ -238,7 +244,6 @@
 
       const gj={ type:'FeatureCollection', features:norm };
 
-      // Re-add source/layer fresh and clear any filter
       if (map.getLayer(GEO_LAYER_ID)) map.removeLayer(GEO_LAYER_ID);
       if (map.getSource(GEO_SOURCE_ID)) map.removeSource(GEO_SOURCE_ID);
       map.addSource(GEO_SOURCE_ID,{ type:'geojson', data:gj });
@@ -256,12 +261,10 @@
       });
       map.setFilter(GEO_LAYER_ID, null);
 
-      // Move points above labels if possible
       const layers = map.getStyle().layers || [];
       const firstSymbol = layers.find(l => l.type === 'symbol')?.id;
       if (firstSymbol) try { map.moveLayer(GEO_LAYER_ID, firstSymbol); } catch {}
 
-      // Fit to data
       try{
         const b=turf.bbox(gj);
         if(b&&isFinite(b[0])&&b[0]!==b[2]&&b[1]!==b[3]){
@@ -269,7 +272,6 @@
         }
       }catch(e){ console.warn('bbox-fit failed', e); }
 
-      // Popups
       map.on('click', GEO_LAYER_ID, e=>{
         const p=e.features[0].properties||{}; const ll=e.features[0].geometry.coordinates;
         const g=k=> (p[k]?String(p[k]):'');
@@ -285,12 +287,10 @@
       map.on('mouseenter', GEO_LAYER_ID, ()=> map.getCanvas().style.cursor='pointer');
       map.on('mouseleave', GEO_LAYER_ID, ()=> map.getCanvas().style.cursor='');
 
-      // Visible count
       updateVisibleCount(); map.on('moveend', updateVisibleCount);
       console.log('[DATA] Layer added. queryRenderedFeatures count:',
         map.queryRenderedFeatures({layers:[GEO_LAYER_ID]}).length);
 
-      // Legend
       document.getElementById('legend').innerHTML = `
         <b>Legend</b><br>
         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2563eb;margin-right:6px"></span>Place<br>
@@ -301,7 +301,6 @@
   });
 
   // ===== Single-point selection =====
-  let originLngLat=null, originMarker=null;
   function setOrigin(lnglat, fly=true){
     originLngLat=lnglat;
     if(!originMarker) originMarker=new mapboxgl.Marker({ color:'#ef4444' });
@@ -316,7 +315,6 @@
   map.on('click', e=>{ if(currentUXMode()==='point') setOrigin(e.lngLat,false); });
 
   // ===== Route capture =====
-  let currentRouteLine=null;
   directions.on('route', e=>{
     try{
       const r=e?.route?.[0];
@@ -385,7 +383,6 @@
     return unionGeom;
   }
 
-  let currentIsoFeature=null;
   function applyIsoFilter(featureOrNull){
     if(!map.getLayer(GEO_LAYER_ID)) return;
     if(featureOrNull){
@@ -401,10 +398,6 @@
   function updateVisibleCount(){
     try{ visOut.textContent=String(map.queryRenderedFeatures({layers:[GEO_LAYER_ID]}).length); }
     catch{ visOut.textContent='n/a'; }
-  }
-  function maybeEnableApply(){
-    if(currentUXMode()==='point') applyBtn.disabled = !originLngLat;
-    else applyBtn.disabled = !getActiveRouteLine()?.coordinates?.length;
   }
 
   // ===== Apply / Clear =====
@@ -438,7 +431,7 @@
   clearBtn.addEventListener('click', ()=>{
     clearErr(); currentIsoFeature=null; hasFitOnce=false;
     if(map.getSource(ISO_SOURCE_ID)) map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features:[] });
-    applyIsoFilter(null);
+    applyIsoFilter(null); maybeEnableApply();
   });
 
 })();
