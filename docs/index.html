@@ -31,6 +31,23 @@
   text-align:center;
   font-weight:600;
 }
+/* Floating toggles that appear when panels are hidden */
+.floating-toggle{
+  position:absolute; z-index:7;
+  background:#111827; color:#fff; border:1px solid #111827;
+  border-radius:999px; padding:8px 12px; font-size:12px; cursor:pointer;
+  box-shadow:0 6px 20px rgba(0,0,0,.18);
+}
+
+/* Positions */
+#controlsToggle{ left:12px; top:12px; }
+#legendToggle{ right:12px; bottom:12px; }
+
+/* Small ghost button for “Hide” inside panels */
+.pill.ghost{
+  background:#fff; color:#111827; border-color:#e5e7eb;
+}
+.pill.ghost:hover{ background:#f3f4f6; }
 
 /* Hover, focus, active states */
 .pill.help-toggle:hover{ background:#6d28d9; }
@@ -151,6 +168,7 @@
 
   <!-- Help pill -->
   <button id="helpBtn" class="pill help-toggle" title="How to Use">How To Use</button>
+<button id="panelHide" class="pill ghost" title="Hide controls">Hide Controls</button>
 
   <div class="search-wrap">
     <div id="dirMount" class="search-row single-like"></div>
@@ -158,6 +176,8 @@
 </div>
 
 <div id="map" aria-label="Interactive map"></div>
+<button id="controlsToggle" class="floating-toggle" style="display:none">Show Controls</button>
+<button id="legendToggle" class="floating-toggle" style="display:none">Show Legend</button>
 
 <!-- Hideable help box -->
 <div id="helpBox" aria-live="polite">
@@ -209,6 +229,13 @@
   const errBox=document.getElementById('err');
   const visOut=document.getElementById('visCount');
   const dirMount=document.getElementById('dirMount');
+  // Toggles for hiding/showing UI
+const panelEl = document.querySelector('.panel');
+const panelHideBtn = document.getElementById('panelHide');
+const controlsToggle = document.getElementById('controlsToggle');
+const legendEl = document.getElementById('legend');
+const legendToggle = document.getElementById('legendToggle');
+
 
   // Help elements
   const helpBtn=document.getElementById('helpBtn');
@@ -341,6 +368,25 @@
       visOut.textContent = layer ? String(map.queryRenderedFeatures({ layers:[layer] }).length) : '0';
     } catch { visOut.textContent = 'n/a'; }
   }
+function setControlsVisible(open){
+  panelEl.style.display = open ? 'flex' : 'none';
+  controlsToggle.style.display = open ? 'none' : 'block';
+  localStorage.setItem('controlsOpen', open ? '1' : '0');
+}
+function setLegendVisible(open){
+  legendEl.style.display = open ? 'block' : 'none';
+  legendToggle.style.display = open ? 'none' : 'block';
+  localStorage.setItem('legendOpen', open ? '1' : '0');
+}
+
+// Wire buttons
+panelHideBtn.addEventListener('click', ()=> setControlsVisible(false));
+controlsToggle.addEventListener('click', ()=> setControlsVisible(true));
+legendToggle.addEventListener('click', ()=> setLegendVisible(true));
+
+// Initial state (default: controls shown, legend shown)
+setControlsVisible(localStorage.getItem('controlsOpen') !== '0');
+setLegendVisible(localStorage.getItem('legendOpen') !== '0');
 
   // ===== Load data and icons =====
   map.on('load', async ()=>{
@@ -569,44 +615,55 @@
       // Legend (icon-based)
       const legend = document.getElementById('legend');
       legend.innerHTML = `
-        <div style="font-weight:700;margin-bottom:6px">Legend</div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+    <div style="font-weight:700">Legend</div>
+    <button id="legendHide" class="pill ghost" style="padding:2px 8px;font-size:11px">Hide</button>
+  </div>
 
-        <div style="margin-bottom:8px">
-          <div style="font-size:12px;color:#374151;margin-bottom:4px">Types</div>
-          <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">
-            <img src="./assets/icons/Food-Green.png"    width="16" height="16" alt="Restaurant icon"><div>Restaurant</div>
-            <img src="./assets/icons/Activity-Blue.png" width="16" height="16" alt="Activity icon"><div>Activity</div>
-            <img src="./assets/icons/Hike-Blue.png"     width="16" height="16" alt="Hike icon"><div>Hike</div>
-            <img src="./assets/icons/Stay-Blue.png"     width="16" height="16" alt="Accommodation icon"><div>Accommodation</div>
-          </div>
-        </div>
+  <div style="margin-bottom:8px">
+    <div style="font-size:12px;color:#374151;margin-bottom:4px">Types</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">
+      <img src="./assets/icons/Food-Green.png"    width="16" height="16" alt="Restaurant icon"><div>Restaurant</div>
+      <img src="./assets/icons/Activity-Blue.png" width="16" height="16" alt="Activity icon"><div>Activity</div>
+      <img src="./assets/icons/Hike-Blue.png"     width="16" height="16" alt="Hike icon"><div>Hike</div>
+      <img src="./assets/icons/Stay-Blue.png"     width="16" height="16" alt="Accommodation icon"><div>Accommodation</div>
+    </div>
+  </div>
 
-        <div style="margin-bottom:8px">
-          <div style="font-size:12px;color:#374151;margin-bottom:4px">Restaurant ratings</div>
-          <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">
-            <img src="./assets/icons/Food-Green.png"  width="16" height="16" alt=""><div><b>1)</b> Must Stop</div>
-            <img src="./assets/icons/Food-Teal.png"   width="16" height="16" alt=""><div><b>1.5)</b> Must Stop BUT…</div>
-            <img src="./assets/icons/Food-Blue.png"   width="16" height="16" alt=""><div><b>2)</b> Go Back</div>
-            <img src="./assets/icons/Food-Orange.png" width="16" height="16" alt=""><div><b>3)</b> Good 2nd Choice</div>
-            <img src="./assets/icons/Food-Red.png"    width="16" height="16" alt=""><div><b>4)</b> Don’t Go Back</div>
-          </div>
-        </div>
+  <div style="margin-bottom:8px">
+    <div style="font-size:12px;color:#374151;margin-bottom:4px">Restaurant ratings</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">
+      <img src="./assets/icons/Food-Green.png"  width="16" height="16" alt=""><div><b>1)</b> Must Stop</div>
+      <img src="./assets/icons/Food-Teal.png"   width="16" height="16" alt=""><div><b>1.5)</b> Must Stop BUT…</div>
+      <img src="./assets/icons/Food-Blue.png"   width="16" height="16" alt=""><div><b>2)</b> Go Back</div>
+      <img src="./assets/icons/Food-Orange.png" width="16" height="16" alt=""><div><b>3)</b> Good 2nd Choice</div>
+      <img src="./assets/icons/Food-Red.png"    width="16" height="16" alt=""><div><b>4)</b> Don’t Go Back</div>
+    </div>
+  </div>
 
-        <div style="margin-bottom:6px">
-          <div style="font-size:12px;color:#374151;margin-bottom:4px">Activity / Hike / Accommodation ratings</div>
-          <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">
-            <img src="./assets/icons/Activity-Green.png" width="16" height="16" alt=""><div><b>1)</b> Top Tier</div>
-            <img src="./assets/icons/Activity-Blue.png"  width="16" height="16" alt=""><div><b>2)</b> Worth It</div>
-            <img src="./assets/icons/Activity-Orange.png" width="16" height="16" alt=""><div><b>3)</b> Meh</div>
-            <img src="./assets/icons/Activity-Red.png"    width="16" height="16" alt=""><div><b>4)</b> Not Worth It</div>
-          </div>
-        </div>
+  <div style="margin-bottom:6px">
+    <div style="font-size:12px;color:#374151;margin-bottom:4px">Activity / Hike / Accommodation ratings</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">
+      <img src="./assets/icons/Activity-Green.png" width="16" height="16" alt=""><div><b>1)</b> Top Tier</div>
+      <img src="./assets/icons/Activity-Blue.png"  width="16" height="16" alt=""><div><b>2)</b> Worth It</div>
+      <img src="./assets/icons/Activity-Orange.png" width="16" height="16" alt=""><div><b>3)</b> Meh</div>
+      <img src="./assets/icons/Activity-Red.png"    width="16" height="16" alt=""><div><b>4)</b> Not Worth It</div>
+    </div>
+  </div>
 
-        <div style="font-size:12px;display:flex;align-items:center;gap:8px">
-          <span style="display:inline-block;width:12px;height:12px;background:#7c3aed;border-radius:2px"></span>
-          Reachable area (within selected minutes)
-        </div>
-      `;
+  <div style="font-size:12px;display:flex;align-items:center;gap:8px">
+    <span style="display:inline-block;width:12px;height:12px;background:#7c3aed;border-radius:2px"></span>
+    Reachable area (within selected minutes)
+  </div>
+`;
+
+// hook up the hide button now that it exists
+const legendHideBtn = document.getElementById('legendHide');
+legendHideBtn.addEventListener('click', ()=> setLegendVisible(false));
+
+// Respect persisted legend visibility after rebuilding content
+setLegendVisible(localStorage.getItem('legendOpen') !== '0');
+
 
       mapReady=true;
       maybeEnableApply();
