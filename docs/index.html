@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Didius Travel Map — Single/Route with One Directions Control</title>
+<title>Didius Travel Map — Single/Route with Custom Icons</title>
 
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet" />
 <link href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.css" rel="stylesheet" />
@@ -25,12 +25,10 @@
 
   .search-wrap{width:100%;display:flex;flex-direction:column;gap:8px;margin-top:6px}
   .search-row{width:100%}
-
-  /* Make the embedded directions control fill the row */
   .search-row .mapboxgl-ctrl-directions{ width:100%; max-width:100% }
   .search-row .directions-control{ box-shadow:none }
 
-  /* Single mode look: identical box but hide Destination row + summary/instructions */
+  /* Single mode look: identical box but hide Destination + summary/instructions */
   .single-like .mapbox-directions-destination{ display:none !important; }
   .single-like .mapbox-directions-instructions,
   .single-like .mapbox-directions-route-summary{ display:none !important; }
@@ -107,7 +105,7 @@
   const STYLE_URL = 'mapbox://styles/brad13martin/cmkjztnvs001u01qm6lsmeold';
   const GEO_PATH  = 'https://brad13martin.github.io/travel-map/data/places.geojson';
 
-  const GEO_SOURCE_ID='places-geo', GEO_LAYER_ID='places-geo-points';const GEO_LAYER_ICONS = 'places-icons';
+  const GEO_SOURCE_ID='places-geo', GEO_LAYER_CIRCLES='places-geo-circles', GEO_LAYER_ICONS='places-geo-icons';
   const ISO_SOURCE_ID='iso-source', ISO_LAYER_FILL='iso-fill', ISO_LAYER_LINE='iso-line';
   const AVG_SPEED_KMH={driving:65,walking:5,cycling:18};
   const MAX_SAMPLES_HARD=60;
@@ -130,25 +128,19 @@
   const map=new mapboxgl.Map({ container:'map', style:STYLE_URL, center:[-80,40], zoom:5 });
   map.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
   map.on('error', ev => {
-  const err = ev && ev.error;
-  const msg = (err && (err.message || err.toString())) || '';
-  const status = err && (err.status || err.code);
-
-  const isHttpFail = typeof status === 'number' && status >= 400;
-  const looksFatal = /network|fetch|geocode|isochrone|setData|source.*missing|layer.*not found/i.test(msg);
-
-  if (isHttpFail || looksFatal) {
-    showErr('Mapbox: ' + msg);
-  } else {
-    // benign style warning; keep it in console only
-    console.warn('Mapbox warning (suppressed):', ev);
-  }
-});
+    const err = ev && ev.error;
+    const msg = (err && (err.message || err.toString())) || '';
+    const status = err && (err.status || err.code);
+    const isHttpFail = typeof status === 'number' && status >= 400;
+    const looksFatal = /network|fetch|geocode|isochrone|setData|source.*missing|layer.*not found/i.test(msg);
+    if (isHttpFail || looksFatal) showErr('Mapbox: ' + msg);
+    else console.warn('Mapbox warning (suppressed):', ev);
+  });
 
   let hasFitOnce=false, mapReady=false;
   let currentRouteLine=null, currentIsoFeature=null;
 
-  // ===== One Directions control =====
+  // ===== Directions control (one box; we hide Destination in single mode) =====
   const dir = new MapboxDirections({
     accessToken: mapboxgl.accessToken, profile:'mapbox/driving', unit:'imperial',
     alternatives:true, controls:{ instructions:true, inputs:true, profileSwitcher:true },
@@ -177,12 +169,11 @@
   function applySingleLook(enable){
     dirMount.classList.toggle('single-like', enable);
     if (enable){
-      // Hide destination and stop accidental routing
       try{ dir.setDestination(''); }catch{}
       patchSingleLabels();
     }
   }
-  // Initial mode look
+  // Initial mode look and label patch
   applySingleLook(true);
   setTimeout(patchSingleLabels, 150);
 
@@ -193,7 +184,7 @@
     maybeEnableApply();
   }));
 
-  // Keep Apply enabled state in sync
+  // Enable/disable Apply
   function maybeEnableApply(){
     if(!mapReady){ applyBtn.disabled=true; clearBtn.disabled=true; return; }
     if (currentUXMode()==='point'){
@@ -214,7 +205,7 @@
   dir.on('origin', maybeEnableApply);
   dir.on('destination', maybeEnableApply);
 
-  // Capture active route geometry
+  // Route geometry
   dir.on('route', e=>{
     try{
       const r=e?.route?.[0];
@@ -225,7 +216,7 @@
     maybeEnableApply();
   });
 
-  // ===== Ensure ISO layers exist =====
+  // ===== Ensure ISO layers exist (for setData safety) =====
   function ensureIsoLayers(){
     if (!map.getSource(ISO_SOURCE_ID)){
       map.addSource(ISO_SOURCE_ID,{ type:'geojson', data:{ type:'FeatureCollection', features:[] } });
@@ -238,11 +229,20 @@
     }
   }
 
-  // ===== Load data =====
+  // ===== Visible count helper (set later once layers exist) =====
+  function updateVisibleCount(){
+    try {
+      const layer = map.getLayer(GEO_LAYER_ICONS) ? GEO_LAYER_ICONS : GEO_LAYER_CIRCLES;
+      visOut.textContent = layer ? String(map.queryRenderedFeatures({ layers:[layer] }).length) : '0';
+    } catch { visOut.textContent = 'n/a'; }
+  }
+
+  // ===== Load data and icons =====
   map.on('load', async ()=>{
     try{
       ensureIsoLayers();
 
+      // — Load places
       const resp=await fetch(GEO_PATH,{ cache:'no-store' });
       if(!resp.ok) throw new Error(`Fetch failed: ${resp.status} ${resp.statusText}`);
       const raw=await resp.json();
@@ -291,162 +291,101 @@
       if(!norm.length) throw new Error('No valid point features found in places.geojson.');
       const gj={ type:'FeatureCollection', features:norm };
 
-      if (map.getLayer(GEO_LAYER_ID)) map.removeLayer(GEO_LAYER_ID);
-      if (map.getSource(GEO_SOURCE_ID)) map.removeSource(GEO_SOURCE_ID);
+      if (map.getLayer(GEO_LAYER_CIRCLES)) map.removeLayer(GEO_LAYER_CIRCLES);
+      if (map.getLayer(GEO_LAYER_ICONS))   map.removeLayer(GEO_LAYER_ICONS);
+      if (map.getSource(GEO_SOURCE_ID))    map.removeSource(GEO_SOURCE_ID);
 
       map.addSource(GEO_SOURCE_ID,{ type:'geojson', data:gj });
+
+      // Base circles (thin) under icons
       map.addLayer({
-        id:GEO_LAYER_ID, type:'circle', source:GEO_SOURCE_ID,
-        paint:{ 'circle-radius':6,'circle-color':'#2563eb','circle-stroke-color':'#fff','circle-stroke-width':1,'circle-opacity':1 }
+        id:GEO_LAYER_CIRCLES, type:'circle', source:GEO_SOURCE_ID,
+        paint:{ 'circle-radius':4,'circle-color':'#2563eb','circle-stroke-color':'#fff','circle-stroke-width':1,'circle-opacity':0.6 }
       });
-      // 1) Load PNGs into the style
-async function addIcon(name) {
-  const url = `./assets/icons/${name}.png`; // relative to docs/index.html
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Icon fetch failed: ${url}`);
-  const bmp = await createImageBitmap(await res.blob());
-  // Use pixelRatio:2 only if your PNGs are @2x. If not, change to {pixelRatio:1}
-  map.addImage(name, bmp, { pixelRatio: 2 });
-}
 
-const iconNames = [
-  'Activity-Green','Activity-Blue','Activity-Orange','Activity-Red',
-  'Food-Green','Food-Teal','Food-Blue','Food-Orange','Food-Red',
-  'Hike-Green','Hike-Blue','Hike-Orange','Hike-Red',
-  'Stay-Green','Stay-Blue','Stay-Orange','Stay-Red'
-];
+      // — Load custom PNG icons
+      async function addIcon(name) {
+        const url = `./assets/icons/${name}.png`; // relative to docs/index.html
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Icon fetch failed: ${url}`);
+        const bmp = await createImageBitmap(await res.blob());
+        if (!map.hasImage(name)) map.addImage(name, bmp, { pixelRatio: 2 }); // use 1 if not @2x
+      }
+      const iconNames = [
+        'Activity-Green','Activity-Blue','Activity-Orange','Activity-Red',
+        'Food-Green','Food-Teal','Food-Blue','Food-Orange','Food-Red',
+        'Hike-Green','Hike-Blue','Hike-Orange','Hike-Red',
+        'Stay-Green','Stay-Blue','Stay-Orange','Stay-Red'
+      ];
+      for (const n of iconNames) { await addIcon(n); }
 
-for (const n of iconNames) { await addIcon(n); }
+      // — Icon logic by Type and Rating
+      const typeLower = ['downcase', ['coalesce', ['get','Type'], '' ]];
+      const isRestaurant = ['match', typeLower, ['restaurant','restaurants','food','eat'], true, false];
+      const isActivity   = ['match', typeLower, ['activity','activities','attraction'], true, false];
+      const isHike       = ['match', typeLower, ['hike','hiking','trail','walk'], true, false];
+      const isStay       = ['match', typeLower, ['accommodation','accomodation','lodging','hotel','stay'], true, false];
 
-// 2) Build the expression that picks the correct image per feature
-const typeLower = ['downcase', ['coalesce', ['get','Type'], '' ]];
-const isRestaurant = ['match', typeLower, ['restaurant','restaurants','food','eat'], true, false];
-const isActivity   = ['match', typeLower, ['activity','activities','attraction'], true, false];
-const isHike       = ['match', typeLower, ['hike','hiking','trail','walk'], true, false];
-const isStay       = ['match', typeLower, ['accommodation','accomodation','lodging','hotel','stay'], true, false];
+      const restRatingText  = ['coalesce', ['get','Restaurant Rating'], '' ];
+      const otherRatingText = ['coalesce', ['get','Activity / Accommodations Rating'], '' ];
 
-const restRatingText  = ['coalesce', ['get','Restaurant Rating'], '' ];
-const otherRatingText = ['coalesce', ['get','Activity / Accommodations Rating'], '' ];
+      const restIconByRating = [
+        'match', restRatingText,
+        '1) Must Stop',        'Food-Green',
+        '1.5) Must Stop BUT…', 'Food-Teal',
+        '2) Go Back',          'Food-Blue',
+        '3) Good 2nd Choice',  'Food-Orange',
+        '4) Don’t Go Back',    'Food-Red',
+        /* default */          'Food-Blue'
+      ];
+      const activityIconByRating = [
+        'match', otherRatingText,
+        '1) Top Tier',     'Activity-Green',
+        '2) Worth It',     'Activity-Blue',
+        '3) Meh',          'Activity-Orange',
+        '4) Not Worth It', 'Activity-Red',
+        /* default */      'Activity-Blue'
+      ];
+      const hikeIconByRating = [
+        'match', otherRatingText,
+        '1) Top Tier',     'Hike-Green',
+        '2) Worth It',     'Hike-Blue',
+        '3) Meh',          'Hike-Orange',
+        '4) Not Worth It', 'Hike-Red',
+        /* default */      'Hike-Blue'
+      ];
+      const stayIconByRating = [
+        'match', otherRatingText,
+        '1) Top Tier',     'Stay-Green',
+        '2) Worth It',     'Stay-Blue',
+        '3) Meh',          'Stay-Orange',
+        '4) Not Worth It', 'Stay-Red',
+        /* default */      'Stay-Blue'
+      ];
 
-// Restaurants (5 labels)
-const restIconByRating = [
-  'match', restRatingText,
-  '1) Must Stop',        'Food-Green',
-  '1.5) Must Stop BUT…', 'Food-Teal',   // if your CSV uses three dots, change to "BUT..."
-  '2) Go Back',          'Food-Blue',
-  '3) Good 2nd Choice',  'Food-Orange',
-  '4) Don’t Go Back',    'Food-Red',    // if your CSV uses "Don't", change the apostrophe
-  /* default */          'Food-Blue'
-];
+      const iconImageExpr = [
+        'case',
+        isRestaurant, restIconByRating,
+        isActivity,   activityIconByRating,
+        isHike,       hikeIconByRating,
+        isStay,       stayIconByRating,
+        /* fallback */ 'Activity-Blue'
+      ];
 
-// Activity / Hike / Stay (4-tier)
-const activityIconByRating = [
-  'match', otherRatingText,
-  '1) Top Tier',     'Activity-Green',
-  '2) Worth It',     'Activity-Blue',
-  '3) Meh',          'Activity-Orange',
-  '4) Not Worth It', 'Activity-Red',
-  /* default */      'Activity-Blue'
-];
-const hikeIconByRating = [
-  'match', otherRatingText,
-  '1) Top Tier',     'Hike-Green',
-  '2) Worth It',     'Hike-Blue',
-  '3) Meh',          'Hike-Orange',
-  '4) Not Worth It', 'Hike-Red',
-  /* default */      'Hike-Blue'
-];
-const stayIconByRating = [
-  'match', otherRatingText,
-  '1) Top Tier',     'Stay-Green',
-  '2) Worth It',     'Stay-Blue',
-  '3) Meh',          'Stay-Orange',
-  '4) Not Worth It', 'Stay-Red',
-  /* default */      'Stay-Blue'
-];
-
-// Final selector (family by Type → color by rating)
-const iconImageExpr = [
-  'case',
-  isRestaurant, restIconByRating,
-  isActivity,   activityIconByRating,
-  isHike,       hikeIconByRating,
-  isStay,       stayIconByRating,
-  /* fallback */ 'Activity-Blue'
-];
-
-// 3) Add a symbol layer that uses your PNGs
-if (map.getLayer(GEO_LAYER_ICONS)) map.removeLayer(GEO_LAYER_ICONS);
-map.addLayer({
-  id: GEO_LAYER_ICONS,
-  type: 'symbol',
-  source: GEO_SOURCE_ID,
-  layout: {
-    'icon-image': iconImageExpr,
-    'icon-size': 1,                // tweak size as you like
-    'icon-allow-overlap': true
-  },
-  paint: {
-    'icon-opacity': 1              // PNGs are pre-colored; icon-color won’t recolor them
-  }
-});
-
-// Put icons above the circles; and circles can stay (or set their opacity lower if you prefer)
-try { map.moveLayer(GEO_LAYER_ICONS); } catch {}
-
-const typeField  = ['get','Type'];
-
-const restTypes  = ['literal',['Restaurant','Restaurants','restaurant','restaurants']];
-const accomTypes = ['literal',['Accommodation','Accomodation','accommodation','accomodation']];
-const hikeTypes  = ['literal',['Hike','hike','Hiking','hiking']];
-const actTypes   = ['literal',['Activity','activity']];
-const iconImageExpr = [
-  'match', typeField,
-  restTypes,  'restaurant-15',
-  accomTypes, 'lodging-15',
-  hikeTypes,  'park-15',
-  actTypes,   'star-15',
-  /* default */ 'marker-15'
-];
- const otherColorExpr = [
-  'match', otherRatingText,
-  '1) Top Tier',                 '#10b981', // green
-  '2) Worth It',                 '#0ea5e9', // blue
-  '3) Meh',                      '#f59e0b', // amber
-  '4) Not Worth It',             '#ef4444', // red
-  /* default */                  '#9ca3af'  // gray
-];     
-const restRatingText  = ['coalesce', ['get','Restaurant Rating'], ''];
-const otherRatingText = ['coalesce', ['get','Activity / Accommodations Rating'], ''];
- const isRestaurant = ['match', typeField, restTypes, true, false];
-const restColorExpr = [
-  'match', restRatingText,
-  '1) Must Stop',                '#10b981', // green
-  '1.5) Must Stop BUT…',         '#34d399', // light green/teal
-  '2) Go Back',                  '#0ea5e9', // blue
-  '3) Good 2nd Choice',          '#f59e0b', // amber
-  '4) Don’t Go Back',            '#ef4444', // red
-  /* default */                  '#9ca3af'  // gray
-];
-map.addLayer({
-  id: GEO_LAYER_ICONS,
-  type: 'symbol',
-  source: GEO_SOURCE_ID,
-  layout: {
-    'icon-image': iconImageExpr,
-    'icon-size': 1,
-    'icon-allow-overlap': true
-  },
-  paint: {
-    'icon-color': iconColorExpr,
-    'icon-opacity': 1
-  }
-});
+      map.addLayer({
+        id: GEO_LAYER_ICONS,
+        type: 'symbol',
+        source: GEO_SOURCE_ID,
+        layout: {
+          'icon-image': iconImageExpr,
+          'icon-size': 1,
+          'icon-allow-overlap': true
+        },
+        paint: { 'icon-opacity': 1 }
+      });
       try { map.moveLayer(GEO_LAYER_ICONS); } catch {}
-      const iconColorExpr = ['case', isRestaurant, restColorExpr, otherColorExpr];
-      
-      try { map.moveLayer(GEO_LAYER_ID); } catch {}
 
+      // Fit to data
       try{
         const b=turf.bbox(gj);
         if(b&&isFinite(b[0])&&b[0]!==b[2]&&b[1]!==b[3]){
@@ -454,7 +393,8 @@ map.addLayer({
         }
       }catch{}
 
-     map.on('click', GEO_LAYER_ICONS, e => {
+      // Popups on icon layer
+      map.on('click', GEO_LAYER_ICONS, e=>{
         const p=e.features[0].properties||{}; const ll=e.features[0].geometry.coordinates;
         const g=k=> (p[k]?String(p[k]):'');
         const lines=[
@@ -469,93 +409,59 @@ map.addLayer({
       map.on('mouseenter', GEO_LAYER_ICONS, ()=> map.getCanvas().style.cursor='pointer');
       map.on('mouseleave', GEO_LAYER_ICONS, ()=> map.getCanvas().style.cursor='');
 
-      document.getElementById('legend').innerHTML = `
-      <b>Legend</b><br>
+      // Legend (icon-based)
+      const legend = document.getElementById('legend');
+      legend.innerHTML = `
+        <div style="font-weight:700;margin-bottom:6px">Legend</div>
 
- // Build an icon-based legend that mirrors the map symbols
-const legend = document.getElementById('legend');
-legend.innerHTML = `
-  <div style="font-weight:700;margin-bottom:6px">Legend</div>
+        <div style="margin-bottom:8px">
+          <div style="font-size:12px;color:#374151;margin-bottom:4px">Types</div>
+          <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">
+            <img src="./assets/icons/Food-Green.png"    width="16" height="16" alt="Restaurant icon"><div>Restaurant</div>
+            <img src="./assets/icons/Activity-Blue.png" width="16" height="16" alt="Activity icon"><div>Activity</div>
+            <img src="./assets/icons/Hike-Blue.png"     width="16" height="16" alt="Hike icon"><div>Hike</div>
+            <img src="./assets/icons/Stay-Blue.png"     width="16" height="16" alt="Accommodation icon"><div>Accommodation</div>
+          </div>
+        </div>
 
-  <!-- Types -->
-  <div style="margin-bottom:8px">
-    <div style="font-size:12px;color:#374151;margin-bottom:4px">Types</div>
-    <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">
-      <img src="./assets/icons/Food-Green.png"    width="16" height="16" alt="Restaurant icon">
-      <div>Restaurant</div>
+        <div style="margin-bottom:8px">
+          <div style="font-size:12px;color:#374151;margin-bottom:4px">Restaurant ratings</div>
+          <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">
+            <img src="./assets/icons/Food-Green.png"  width="16" height="16" alt=""><div><b>1)</b> Must Stop</div>
+            <img src="./assets/icons/Food-Teal.png"   width="16" height="16" alt=""><div><b>1.5)</b> Must Stop BUT…</div>
+            <img src="./assets/icons/Food-Blue.png"   width="16" height="16" alt=""><div><b>2)</b> Go Back</div>
+            <img src="./assets/icons/Food-Orange.png" width="16" height="16" alt=""><div><b>3)</b> Good 2nd Choice</div>
+            <img src="./assets/icons/Food-Red.png"    width="16" height="16" alt=""><div><b>4)</b> Don’t Go Back</div>
+          </div>
+        </div>
 
-      <img src="./assets/icons/Activity-Blue.png" width="16" height="16" alt="Activity icon">
-      <div>Activity</div>
+        <div style="margin-bottom:6px">
+          <div style="font-size:12px;color:#374151;margin-bottom:4px">Activity / Hike / Accommodation ratings</div>
+          <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">
+            <img src="./assets/icons/Activity-Green.png" width="16" height="16" alt=""><div><b>1)</b> Top Tier</div>
+            <img src="./assets/icons/Activity-Blue.png"  width="16" height="16" alt=""><div><b>2)</b> Worth It</div>
+            <img src="./assets/icons/Activity-Orange.png" width="16" height="16" alt=""><div><b>3)</b> Meh</div>
+            <img src="./assets/icons/Activity-Red.png"    width="16" height="16" alt=""><div><b>4)</b> Not Worth It</div>
+          </div>
+        </div>
 
-      <img src="./assets/icons/Hike-Blue.png"     width="16" height="16" alt="Hike icon">
-      <div>Hike</div>
-
-      <img src="./assets/icons/Stay-Blue.png"     width="16" height="16" alt="Accommodation icon">
-      <div>Accommodation</div>
-    </div>
-  </div>
-
-  <!-- Restaurant rating colors -->
-  <div style="margin-bottom:8px">
-    <div style="font-size:12px;color:#374151;margin-bottom:4px">Restaurant ratings</div>
-    <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">
-      <img src="./assets/icons/Food-Green.png"  width="16" height="16" alt="">
-      <div><b>1)</b> Must Stop</div>
-
-      <img src="./assets/icons/Food-Teal.png"   width="16" height="16" alt="">
-      <div><b>1.5)</b> Must Stop BUT…</div>
-
-      <img src="./assets/icons/Food-Blue.png"   width="16" height="16" alt="">
-      <div><b>2)</b> Go Back</div>
-
-      <img src="./assets/icons/Food-Orange.png" width="16" height="16" alt="">
-      <div><b>3)</b> Good 2nd Choice</div>
-
-      <img src="./assets/icons/Food-Red.png"    width="16" height="16" alt="">
-      <div><b>4)</b> Don’t Go Back</div>
-    </div>
-  </div>
-
-  <!-- Activity / Hike / Accommodation rating colors -->
-  <div style="margin-bottom:6px">
-    <div style="font-size:12px;color:#374151;margin-bottom:4px">Activity / Hike / Accommodation ratings</div>
-    <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">
-      <img src="./assets/icons/Activity-Green.png" width="16" height="16" alt="">
-      <div><b>1)</b> Top Tier</div>
-
-      <img src="./assets/icons/Activity-Blue.png"  width="16" height="16" alt="">
-      <div><b>2)</b> Worth It</div>
-
-      <img src="./assets/icons/Activity-Orange.png" width="16" height="16" alt="">
-      <div><b>3)</b> Meh</div>
-
-      <img src="./assets/icons/Activity-Red.png"    width="16" height="16" alt="">
-      <div><b>4)</b> Not Worth It</div>
-    </div>
-  </div>
-
-  <!-- Isochrone hint -->
-  <div style="font-size:12px;display:flex;align-items:center;gap:8px">
-    <span style="display:inline-block;width:12px;height:12px;background:#7c3aed;border-radius:2px"></span>
-    Reachable area (within selected minutes)
-  </div>
-`;
+        <div style="font-size:12px;display:flex;align-items:center;gap:8px">
+          <span style="display:inline-block;width:12px;height:12px;background:#7c3aed;border-radius:2px"></span>
+          Reachable area (within selected minutes)
+        </div>
+      `;
 
       mapReady=true;
       maybeEnableApply();
       clearBtn.disabled=false;
 
-      function updateVisibleCount(){
-        try { visOut.textContent = String(map.queryRenderedFeatures({ layers:[GEO_LAYER_ICONS] }).length); }
-  catch { visOut.textContent = 'n/a'; }
-      }
       updateVisibleCount();
       map.on('moveend', updateVisibleCount);
 
     }catch(e){ showErr(e.message||String(e)); console.error(e); }
   });
 
-  // ===== Helpers =====
+  // ===== Geocode helper (for Single point) =====
   async function geocodeQuery(q){
     const url = new URL(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`);
     url.searchParams.set('access_token', mapboxgl.accessToken);
@@ -568,6 +474,7 @@ legend.innerHTML = `
     return {lng:f.center[0], lat:f.center[1]};
   }
 
+  // ===== Isochrone helpers =====
   async function fetchIso(lng,lat,minutes,profile){
     const url=new URL(`https://api.mapbox.com/isochrone/v1/mapbox/${profile}/${lng},${lat}`);
     url.searchParams.set('contours_minutes',String(minutes));
@@ -608,30 +515,21 @@ legend.innerHTML = `
     return unionGeom;
   }
 
-  function ensureIsoReady(){
-    if (!map.getSource(ISO_SOURCE_ID) || !map.getLayer(ISO_LAYER_FILL) || !map.getLayer(ISO_LAYER_LINE)){
-      ensureIsoLayers();
-    }
-  }
-
+  // ===== Filter helpers =====
   function applyIsoFilter(featureOrNull){
-  const filt = featureOrNull ? ['within',['literal',featureOrNull]] : null;
-
-  if (map.getLayer(GEO_LAYER_ID))     map.setFilter(GEO_LAYER_ID,     filt);
-  if (map.getLayer(GEO_LAYER_ICONS))  map.setFilter(GEO_LAYER_ICONS,  filt);
-
-  // optional: soften base circles when filtering
-  if (map.getLayer(GEO_LAYER_ID))     map.setPaintProperty(GEO_LAYER_ID,'circle-opacity', featureOrNull ? 0.2 : 1);
-  if (map.getLayer(GEO_LAYER_ICONS))  map.setPaintProperty(GEO_LAYER_ICONS,'icon-opacity', featureOrNull ? 1 : 1);
-
-  updateVisibleCount && updateVisibleCount();
-}
+    const filt = featureOrNull ? ['within',['literal',featureOrNull]] : null;
+    if (map.getLayer(GEO_LAYER_CIRCLES)) map.setFilter(GEO_LAYER_CIRCLES, filt);
+    if (map.getLayer(GEO_LAYER_ICONS))   map.setFilter(GEO_LAYER_ICONS,   filt);
+    if (map.getLayer(GEO_LAYER_CIRCLES)) map.setPaintProperty(GEO_LAYER_CIRCLES,'circle-opacity', featureOrNull ? 0.2 : 0.6);
+    if (map.getLayer(GEO_LAYER_ICONS))   map.setPaintProperty(GEO_LAYER_ICONS,'icon-opacity', 1);
+    updateVisibleCount();
+  }
 
   // ===== Apply / Clear =====
   applyBtn.addEventListener('click', async ()=>{
     clearErr();
     if (!mapReady){ showErr('Map is still loading.'); return; }
-    ensureIsoReady();
+    ensureIsoLayers();
 
     const minutes=Number(minsInput.value||15);
     const profile=(document.querySelector('input[name="mode"]:checked')?.value||'driving');
@@ -684,7 +582,7 @@ legend.innerHTML = `
 
   clearBtn.addEventListener('click', ()=>{
     clearErr(); currentIsoFeature=null; hasFitOnce=false;
-    ensureIsoReady();
+    ensureIsoLayers();
     const isoSrc = map.getSource(ISO_SOURCE_ID);
     if (isoSrc) isoSrc.setData({ type:'FeatureCollection', features:[] });
     applyIsoFilter(null);
