@@ -299,34 +299,47 @@
         id:GEO_LAYER_ID, type:'circle', source:GEO_SOURCE_ID,
         paint:{ 'circle-radius':6,'circle-color':'#2563eb','circle-stroke-color':'#fff','circle-stroke-width':1,'circle-opacity':1 }
       });
-const typeField        = ['get','Type'];
-const restRatingText   = ['coalesce', ['get','Restaurant Rating'], ''];
-const otherRatingText  = ['coalesce', ['get','Activity / Accommodations Rating'], ''];
+      
+const typeField  = ['get','Type'];
+
 const restTypes  = ['literal',['Restaurant','Restaurants','restaurant','restaurants']];
-const isRestaurant = ['match', typeField, restTypes, true, false];
+const accomTypes = ['literal',['Accommodation','Accomodation','accommodation','accomodation']];
+const hikeTypes  = ['literal',['Hike','hike','Hiking','hiking']];
+const actTypes   = ['literal',['Activity','activity']];
+const iconImageExpr = [
+  'match', typeField,
+  restTypes,  'restaurant-15',
+  accomTypes, 'lodging-15',
+  hikeTypes,  'park-15',
+  actTypes,   'star-15',
+  /* default */ 'marker-15'
+];
+ const otherColorExpr = [
+  'match', otherRatingText,
+  '1) Top Tier',                 '#10b981', // green
+  '2) Worth It',                 '#0ea5e9', // blue
+  '3) Meh',                      '#f59e0b', // amber
+  '4) Not Worth It',             '#ef4444', // red
+  /* default */                  '#9ca3af'  // gray
+];     
+const restRatingText  = ['coalesce', ['get','Restaurant Rating'], ''];
+const otherRatingText = ['coalesce', ['get','Activity / Accommodations Rating'], ''];
+ const isRestaurant = ['match', typeField, restTypes, true, false];
 const restColorExpr = [
   'match', restRatingText,
-  '1) Must Stop',               '#10b981',   // green
-  '1.5) Must Stop BUT…',        '#34d399',   // light green/teal
-  '2) Go Back',                 '#0ea5e9',   // blue
-  '3) Good 2nd Choice',         '#f59e0b',   // amber
-  '4) Don’t Go Back',           '#ef4444',   // red
-  /* default */                 '#9ca3af'    // gray
-];
-const otherColorExpr = [
-  'match', otherRatingText,
-  '1) Top Tier',                '#10b981',   // green
-  '2) Worth It',                '#0ea5e9',   // blue
-  '3) Meh',                     '#f59e0b',   // amber
-  '4) Not Worth It',            '#ef4444',   // red
-  /* default */                 '#9ca3af'    // gray
+  '1) Must Stop',                '#10b981', // green
+  '1.5) Must Stop BUT…',         '#34d399', // light green/teal
+  '2) Go Back',                  '#0ea5e9', // blue
+  '3) Good 2nd Choice',          '#f59e0b', // amber
+  '4) Don’t Go Back',            '#ef4444', // red
+  /* default */                  '#9ca3af'  // gray
 ];
 map.addLayer({
   id: GEO_LAYER_ICONS,
   type: 'symbol',
   source: GEO_SOURCE_ID,
   layout: {
-    'icon-image': iconImageExpr,   // keep your existing iconImageExpr
+    'icon-image': iconImageExpr,
     'icon-size': 1,
     'icon-allow-overlap': true
   },
@@ -335,6 +348,7 @@ map.addLayer({
     'icon-opacity': 1
   }
 });
+      try { map.moveLayer(GEO_LAYER_ICONS); } catch {}
       const iconColorExpr = ['case', isRestaurant, restColorExpr, otherColorExpr];
       
       try { map.moveLayer(GEO_LAYER_ID); } catch {}
@@ -346,7 +360,7 @@ map.addLayer({
         }
       }catch{}
 
-      map.on('click', GEO_LAYER_ID, e=>{
+     map.on('click', GEO_LAYER_ICONS, e => {
         const p=e.features[0].properties||{}; const ll=e.features[0].geometry.coordinates;
         const g=k=> (p[k]?String(p[k]):'');
         const lines=[
@@ -358,22 +372,50 @@ map.addLayer({
         ].filter(Boolean);
         new mapboxgl.Popup().setLngLat(ll).setHTML(lines.join('<br>')).addTo(map);
       });
-      map.on('mouseenter', GEO_LAYER_ID, ()=> map.getCanvas().style.cursor='pointer');
-      map.on('mouseleave', GEO_LAYER_ID, ()=> map.getCanvas().style.cursor='');
+      map.on('mouseenter', GEO_LAYER_ICONS, ()=> map.getCanvas().style.cursor='pointer');
+      map.on('mouseleave', GEO_LAYER_ICONS, ()=> map.getCanvas().style.cursor='');
 
       document.getElementById('legend').innerHTML = `
-        <b>Legend</b><br>
-        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2563eb;margin-right:6px"></span>Place<br>
-        <span style="display:inline-block;width:10px;height:10px;background:#7c3aed;margin-right:6px"></span>Reachable area
-      `;
+      <b>Legend</b><br>
+
+  <!-- Icons by Type -->
+  <div style="margin:6px 0 8px 0">
+    <span style="display:inline-block;width:16px;height:16px;vertical-align:middle;margin-right:6px">🍽</span>
+    Restaurant
+    &nbsp;&nbsp;
+    <span style="display:inline-block;width:16px;height:16px;vertical-align:middle;margin:0 6px 0 12px">★</span>
+    Activity
+    &nbsp;&nbsp;
+    <span style="display:inline-block;width:16px;height:16px;vertical-align:middle;margin:0 6px 0 12px">🏕</span>
+    Hike
+    &nbsp;&nbsp;
+    <span style="display:inline-block;width:16px;height:16px;vertical-align:middle;margin:0 6px 0 12px">🛏</span>
+    Accommodation
+  </div>
+
+  <!-- Color by rating -->
+  <div style="font-size:12px;line-height:1.6">
+    <div><span style="display:inline-block;width:10px;height:10px;background:#10b981;margin-right:6px"></span><b>Best</b> (Restaurant: “1) Must Stop”; Others: “1) Top Tier”)</div>
+    <div><span style="display:inline-block;width:10px;height:10px;background:#34d399;margin-right:6px"></span>Restaurant: “1.5) Must Stop BUT…”</div>
+    <div><span style="display:inline-block;width:10px;height:10px;background:#0ea5e9;margin-right:6px"></span>Restaurant: “2) Go Back”; Others: “2) Worth It”</div>
+    <div><span style="display:inline-block;width:10px;height:10px;background:#f59e0b;margin-right:6px"></span>Restaurant: “3) Good 2nd Choice”; Others: “3) Meh”</div>
+    <div><span style="display:inline-block;width:10px;height:10px;background:#ef4444;margin-right:6px"></span><b>Worst</b> (Restaurant: “4) Don’t Go Back”; Others: “4) Not Worth It”)</div>
+  </div>
+
+  <!-- Isochrone hint -->
+  <div style="margin-top:8px">
+    <span style="display:inline-block;width:10px;height:10px;background:#7c3aed;margin-right:6px"></span>
+    Reachable area
+  </div>
+`;
 
       mapReady=true;
       maybeEnableApply();
       clearBtn.disabled=false;
 
       function updateVisibleCount(){
-        try{ visOut.textContent=String(map.queryRenderedFeatures({layers:[GEO_LAYER_ID]}).length); }
-        catch{ visOut.textContent='n/a'; }
+        try { visOut.textContent = String(map.queryRenderedFeatures({ layers:[GEO_LAYER_ICONS] }).length); }
+  catch { visOut.textContent = 'n/a'; }
       }
       updateVisibleCount();
       map.on('moveend', updateVisibleCount);
@@ -441,16 +483,17 @@ map.addLayer({
   }
 
   function applyIsoFilter(featureOrNull){
-    if(!map.getLayer(GEO_LAYER_ID)) return;
-    if(featureOrNull){
-      const lit=['literal',featureOrNull];
-      map.setFilter(GEO_LAYER_ID,['all',['within',lit]]);
-      map.setPaintProperty(GEO_LAYER_ID,'circle-opacity',['case',['within',lit],1,0.2]);
-    }else{
-      map.setFilter(GEO_LAYER_ID,null);
-      map.setPaintProperty(GEO_LAYER_ID,'circle-opacity',1);
-    }
-  }
+  const filt = featureOrNull ? ['within',['literal',featureOrNull]] : null;
+
+  if (map.getLayer(GEO_LAYER_ID))     map.setFilter(GEO_LAYER_ID,     filt);
+  if (map.getLayer(GEO_LAYER_ICONS))  map.setFilter(GEO_LAYER_ICONS,  filt);
+
+  // optional: soften base circles when filtering
+  if (map.getLayer(GEO_LAYER_ID))     map.setPaintProperty(GEO_LAYER_ID,'circle-opacity', featureOrNull ? 0.2 : 1);
+  if (map.getLayer(GEO_LAYER_ICONS))  map.setPaintProperty(GEO_LAYER_ICONS,'icon-opacity', featureOrNull ? 1 : 1);
+
+  updateVisibleCount && updateVisibleCount();
+}
 
   // ===== Apply / Clear =====
   applyBtn.addEventListener('click', async ()=>{
