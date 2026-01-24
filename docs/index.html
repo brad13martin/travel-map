@@ -51,37 +51,57 @@
     border:1px solid #e5e7eb;border-radius:10px;padding:6px 8px;font-size:12px;z-index:4
   }
   button:disabled{opacity:.5;cursor:not-allowed}
-  /* Pretty popups */
-.mapboxgl-popup.poi .mapboxgl-popup-content{
-  font-family: system-ui, Inter, Arial;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid #e5e7eb;
-  box-shadow: 0 10px 30px rgba(0,0,0,.18);
-}
-.poi .h{
-  font-weight:700;font-size:14px;line-height:1.1;margin:0 0 4px 0;color:#111827
-}
-.poi .sub{
-  font-size:12px;color:#4b5563;margin-bottom:6px
-}
-.poi .row{ display:flex; gap:8px; align-items:center; margin:6px 0 }
-.poi .badge{
-  display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; color:#fff
-}
-.poi .b-green{ background:#10b981 }   /* Best */
-.poi .b-teal{  background:#14b8a6 }   /* 1.5 */
-.poi .b-blue{  background:#3b82f6 }   /* Good */
-.poi .b-amber{ background:#f59e0b }   /* Meh */
-.poi .b-red{   background:#ef4444 }   /* Worst */
-.poi .btns{ display:flex; gap:8px; margin-top:10px }
-.poi button{
-  border:1px solid #e5e7eb; background:#f8fafc; border-radius:8px; padding:6px 10px;
-  font-size:12px; cursor:pointer
-}
-.poi a{ color:#2563eb; text-decoration:none }
-.poi a:hover{ text-decoration:underline }
 
+  /* Pretty popups */
+  .mapboxgl-popup.poi .mapboxgl-popup-content{
+    font-family: system-ui, Inter, Arial;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 10px 30px rgba(0,0,0,.18);
+  }
+  .poi .h{
+    font-weight:700;font-size:14px;line-height:1.1;margin:0 0 4px 0;color:#111827
+  }
+  .poi .sub{
+    font-size:12px;color:#4b5563;margin-bottom:6px
+  }
+  .poi .row{ display:flex; gap:8px; align-items:center; margin:6px 0 }
+  .poi .badge{
+    display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; color:#fff
+  }
+  .poi .b-green{ background:#10b981 }   /* Best */
+  .poi .b-teal{  background:#14b8a6 }   /* 1.5 */
+  .poi .b-blue{  background:#3b82f6 }   /* Good */
+  .poi .b-amber{ background:#f59e0b }   /* Meh */
+  .poi .b-red{   background:#ef4444 }   /* Worst */
+  .poi .btns{ display:flex; gap:8px; margin-top:10px }
+  .poi button{
+    border:1px solid #e5e7eb; background:#f8fafc; border-radius:8px; padding:6px 10px;
+    font-size:12px; cursor:pointer
+  }
+  .poi a{ color:#2563eb; text-decoration:none }
+  .poi a:hover{ text-decoration:underline }
+
+  /* Help box */
+  #helpBox{
+    position:absolute;left:12px;bottom:110px; /* above legend */
+    background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;
+    box-shadow:0 8px 24px rgba(0,0,0,.14);
+    width:min(92vw,520px);max-height:55vh;overflow:auto;z-index:3;
+    display:none;padding:14px 16px
+  }
+  #helpBox h3{margin:10px 0 6px 0;font-size:14px}
+  #helpBox p{margin:6px 0;font-size:13px;line-height:1.4}
+  #helpBox .row{margin:6px 0;font-size:13px;line-height:1.35}
+  #helpBox .close{
+    position:sticky;top:0;display:flex;justify-content:flex-end;margin:-6px -6px 6px 0;
+    background:linear-gradient(#fff, #fff)
+  }
+  #helpBox .close button{
+    border:1px solid #e5e7eb;background:#f8fafc;border-radius:8px;padding:4px 8px;font-size:12px;cursor:pointer
+  }
+  #helpBox hr{border:0;border-top:1px solid #e5e7eb;margin:10px 0}
 </style>
 </head>
 <body>
@@ -115,12 +135,37 @@
     Fit view to area
   </label>
 
+  <!-- Help pill -->
+  <button id="helpBtn" class="pill" title="How this map works">Help</button>
+
   <div class="search-wrap">
     <div id="dirMount" class="search-row single-like"></div>
   </div>
 </div>
 
 <div id="map" aria-label="Interactive map"></div>
+
+<!-- Hideable help box -->
+<div id="helpBox" aria-live="polite">
+  <div class="close"><button id="helpClose">Hide</button></div>
+  <h3>How to use this map</h3>
+  <p><b>Single point</b>: choose a Location in the box, pick minutes and travel mode, then press Apply to see everything within that time.</p>
+  <p><b>Route</b>: switch to Route, enter A and B, choose minutes and mode, then Apply to find stops along the entire route.</p>
+  <hr>
+  <h3>Activity/Accomodation Rating Explanation</h3>
+  <div class="row"><b>1) Top Tier</b> — Really cool. If you considered doing something similar, this will be an excellent choice.</div>
+  <div class="row"><b>2) Worth It</b> — You will not be disappointed. It will be a good experience that feels worth the price/time.</div>
+  <div class="row"><b>3) Meh</b> — The title says it… Just Meh. There are probably other things that I would have rather spend me time on.</div>
+  <div class="row"><b>4) Not Worth It</b> — Again, the title say it all. Unless you are REALLY looking forward to this thing, I would avoid it. There are much better things to spend time and money on.</div>
+  <hr>
+  <h3>Restaurant Rating Explanation</h3>
+  <div class="row"><b>1) Must Stop</b> — Fantastic. If you are within a distance that feels reasonable to you, you should go here. These are the places that you would be PUMPED to tell someone about.</div>
+  <div class="row"><b>1.5) Must Stop But…</b> — This is an odd one. Fantastic place, but requires you to really be in a particular mood.</div>
+  <div class="row"><b>2) Go Back</b> — These are just good restaurants. You leave very happy with the meal. But they aren’t the ones that necessarily give you anything out of the ordinary, but they are very good.</div>
+  <div class="row"><b>3) Good 2nd Choice</b> — This is an odd one. Not a bad restaurant, but probably not something you would choose to go back to. This is one of those that, if your main choice is booked and you cant get in, you can choose this and know that it wont be excellent, but it will be a decent meal.</div>
+  <div class="row"><b>4) Don’t Go Back</b> — Again, the title say it all. Unless you are REALLY looking forward to this thing, I would avoid it. There are much better things to spend time and money on.</div>
+</div>
+
 <div id="legend"></div>
 <div id="err"></div>
 <div id="dbg">Visible points: <span id="visCount">0</span></div>
@@ -151,9 +196,24 @@
   const visOut=document.getElementById('visCount');
   const dirMount=document.getElementById('dirMount');
 
+  // Help elements
+  const helpBtn=document.getElementById('helpBtn');
+  const helpBox=document.getElementById('helpBox');
+  const helpClose=document.getElementById('helpClose');
+
   function showErr(msg){ errBox.style.display='block'; errBox.textContent=msg; }
   function clearErr(){ errBox.style.display='none'; errBox.textContent=''; }
   minsInput.addEventListener('input', ()=> minsVal.textContent=minsInput.value);
+
+  // Help box toggle with persistence
+  function setHelp(open){
+    helpBox.style.display = open ? 'block' : 'none';
+    localStorage.setItem('helpOpen', open ? '1':'0');
+  }
+  helpBtn.addEventListener('click', ()=> setHelp(helpBox.style.display!=='block'));
+  helpClose.addEventListener('click', ()=> setHelp(false));
+  // open by default on first visit
+  setHelp(localStorage.getItem('helpOpen') !== '0');
 
   // ===== MAP =====
   const map=new mapboxgl.Map({ container:'map', style:STYLE_URL, center:[-80,40], zoom:5 });
@@ -424,100 +484,73 @@
         }
       }catch{}
 
-      // Popups on icon layer
-     // Popups on icon layer (pretty, with rating badge + actions)
-map.on('click', GEO_LAYER_ICONS, e=>{
-  const f   = e.features[0];
-  const p   = f.properties || {};
-  const ll  = f.geometry.coordinates;
-  const get = k => (p[k] ? String(p[k]) : '');
+      // Popups on icon layer (pretty, with rating badge + actions)
+      map.on('click', GEO_LAYER_ICONS, e=>{
+        const f   = e.features[0];
+        const p   = f.properties || {};
+        const ll  = f.geometry.coordinates;
+        const get = k => (p[k] ? String(p[k]) : '');
 
-  // Normalize fields
-  const name = get('Name') || get('name') || 'Place';
-  const type = get('Type') || '';
-  const city = get('City') || '';
-  const state= get('State') || '';
-  const url  = get('URL')  || get('Link') || '';
+        const name = get('Name') || get('name') || 'Place';
+        const type = get('Type') || '';
+        const city = get('City') || '';
+        const state= get('State') || '';
+        const url  = get('URL')  || get('Link') || '';
+        const rRest  = get('Restaurant Rating');
+        const rOther = get('Activity / Accommodations Rating');
 
-  // Ratings (two systems)
-  const rRest  = get('Restaurant Rating');                   // Restaurants
-  const rOther = get('Activity / Accommodations Rating');    // Activity/Hike/Accommodation
+        const typeLower = type.toLowerCase();
+        const isRestaurantLocal = /restaurant|food|eat/.test(typeLower);
 
-  // Choose which rating to show based on Type
-  const typeLower = type.toLowerCase();
-  const isRestaurant = /restaurant|food|eat/.test(typeLower);
+        function badge(text, cls){ return `<span class="badge ${cls}">${text}</span>`; }
+        function restaurantBadge(txt){
+          switch(txt){
+            case '1) Must Stop':               return badge('1) Must Stop','b-green');
+            case '1.5) Must Stop BUT…':        return badge('1.5 Must Stop (but…)','b-teal');
+            case '2) Go Back':                 return badge('2) Go Back','b-blue');
+            case '3) Good 2nd Choice':         return badge('3) Good 2nd Choice','b-amber');
+            case '4) Don’t Go Back':           return badge('4) Don’t Go Back','b-red');
+            default:                           return '';
+          }
+        }
+        function otherBadge(txt){
+          switch(txt){
+            case '1) Top Tier':                return badge('1) Top Tier','b-green');
+            case '2) Worth It':                return badge('2) Worth It','b-blue');
+            case '3) Meh':                     return badge('3) Meh','b-amber');
+            case '4) Not Worth It':            return badge('4) Not Worth It','b-red');
+            default:                           return '';
+          }
+        }
+        const ratingChip = isRestaurantLocal ? restaurantBadge(rRest) : otherBadge(rOther);
+        const locLine = (city || state) ? `${city}${city && state ? ', ' : ''}${state}` : '';
+        const notes   = get('Notes');
 
-  // Badge helper
-  function badge(text, cls) {
-    return `<span class="badge ${cls}">${text}</span>`;
-  }
+        const html = `
+          <div class="poi">
+            <div class="h">${name}</div>
+            <div class="sub">${type}${locLine ? ' · ' + locLine : ''}</div>
+            ${ratingChip ? `<div class="row">${ratingChip}</div>` : ''}
+            ${notes ? `<div style="font-size:12px;color:#111827;margin-top:6px">${notes}</div>` : ''}
+            <div class="btns">
+              <button id="poi-set-origin">Set as Origin</button>
+              <button id="poi-set-dest">Set as Destination</button>
+              ${url ? `<a href="${url}" target="_blank" rel="noopener" style="align-self:center">Website →</a>` : ''}
+            </div>
+          </div>
+        `;
+        const popup = new mapboxgl.Popup({ className:'poi', offset:12, closeButton:true, closeOnClick:true, maxWidth:'300px' })
+          .setLngLat(ll).setHTML(html).addTo(map);
+        popup.on('open', ()=>{
+          const btnO = document.getElementById('poi-set-origin');
+          const btnD = document.getElementById('poi-set-dest');
+          if (btnO) btnO.onclick = ()=> { try{ dir.setOrigin(ll); }catch{} };
+          if (btnD) btnD.onclick = ()=> { try{ dir.setDestination(ll); }catch{} };
+        });
+      });
 
-  // Map rating -> colored badge text/class
-  function restaurantBadge(txt){
-    switch(txt){
-      case '1) Must Stop':               return badge('1) Must Stop','b-green');
-      case '1.5) Must Stop BUT…':        return badge('1.5 Must Stop (but…)','b-teal');
-      case '2) Go Back':                 return badge('2) Go Back','b-blue');
-      case '3) Good 2nd Choice':         return badge('3) Good 2nd Choice','b-amber');
-      case '4) Don’t Go Back':           return badge('4) Don’t Go Back','b-red');
-      default:                           return '';
-    }
-  }
-  function otherBadge(txt){
-    switch(txt){
-      case '1) Top Tier':                return badge('1) Top Tier','b-green');
-      case '2) Worth It':                return badge('2) Worth It','b-blue');
-      case '3) Meh':                     return badge('3) Meh','b-amber');
-      case '4) Not Worth It':            return badge('4) Not Worth It','b-red');
-      default:                           return '';
-    }
-  }
-
-  const ratingChip = isRestaurant ? restaurantBadge(rRest) : otherBadge(rOther);
-
-  // Optional info lines
-  const locLine = (city || state) ? `${city}${city && state ? ', ' : ''}${state}` : '';
-  const notes   = get('Notes');
-
-  const html = `
-    <div class="poi">
-      <div class="h">${name}</div>
-      <div class="sub">${type}${locLine ? ' · ' + locLine : ''}</div>
-      ${ratingChip ? `<div class="row">${ratingChip}</div>` : ''}
-
-      ${notes ? `<div style="font-size:12px;color:#111827;margin-top:6px">${notes}</div>` : ''}
-
-      <div class="btns">
-        <button id="poi-set-origin">Set as Origin</button>
-        <button id="poi-set-dest">Set as Destination</button>
-        ${url ? `<a href="${url}" target="_blank" rel="noopener" style="align-self:center">Website →</a>` : ''}
-      </div>
-    </div>
-  `;
-
-  const popup = new mapboxgl.Popup({
-      className: 'poi',
-      offset: 12,
-      closeButton: true,
-      closeOnClick: true,
-      maxWidth: '300px'
-    })
-    .setLngLat(ll)
-    .setHTML(html)
-    .addTo(map);
-
-  // Wire the buttons to your Directions control
-  // Uses the *displayed* coordinates from the feature
-  popup.on('open', ()=>{
-    const btnO = document.getElementById('poi-set-origin');
-    const btnD = document.getElementById('poi-set-dest');
-    if (btnO) btnO.onclick = ()=> { try{ dir.setOrigin(ll); }catch{} };
-    if (btnD) btnD.onclick = ()=> { try{ dir.setDestination(ll); }catch{} };
-  });
-});
-
-map.on('mouseenter', GEO_LAYER_ICONS, ()=> map.getCanvas().style.cursor='pointer');
-map.on('mouseleave', GEO_LAYER_ICONS, ()=> map.getCanvas().style.cursor='');
+      map.on('mouseenter', GEO_LAYER_ICONS, ()=> map.getCanvas().style.cursor='pointer');
+      map.on('mouseleave', GEO_LAYER_ICONS, ()=> map.getCanvas().style.cursor='');
 
       // Legend (icon-based)
       const legend = document.getElementById('legend');
