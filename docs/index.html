@@ -51,6 +51,37 @@
     border:1px solid #e5e7eb;border-radius:10px;padding:6px 8px;font-size:12px;z-index:4
   }
   button:disabled{opacity:.5;cursor:not-allowed}
+  /* Pretty popups */
+.mapboxgl-popup.poi .mapboxgl-popup-content{
+  font-family: system-ui, Inter, Arial;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 10px 30px rgba(0,0,0,.18);
+}
+.poi .h{
+  font-weight:700;font-size:14px;line-height:1.1;margin:0 0 4px 0;color:#111827
+}
+.poi .sub{
+  font-size:12px;color:#4b5563;margin-bottom:6px
+}
+.poi .row{ display:flex; gap:8px; align-items:center; margin:6px 0 }
+.poi .badge{
+  display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; color:#fff
+}
+.poi .b-green{ background:#10b981 }   /* Best */
+.poi .b-teal{  background:#14b8a6 }   /* 1.5 */
+.poi .b-blue{  background:#3b82f6 }   /* Good */
+.poi .b-amber{ background:#f59e0b }   /* Meh */
+.poi .b-red{   background:#ef4444 }   /* Worst */
+.poi .btns{ display:flex; gap:8px; margin-top:10px }
+.poi button{
+  border:1px solid #e5e7eb; background:#f8fafc; border-radius:8px; padding:6px 10px;
+  font-size:12px; cursor:pointer
+}
+.poi a{ color:#2563eb; text-decoration:none }
+.poi a:hover{ text-decoration:underline }
+
 </style>
 </head>
 <body>
@@ -394,20 +425,99 @@
       }catch{}
 
       // Popups on icon layer
-      map.on('click', GEO_LAYER_ICONS, e=>{
-        const p=e.features[0].properties||{}; const ll=e.features[0].geometry.coordinates;
-        const g=k=> (p[k]?String(p[k]):'');
-        const lines=[
-          `<strong>${g('Name')||g('name')||'Place'}</strong>`,
-          g('Type') && `<div><em>${g('Type')}</em></div>`,
-          (g('City')||g('State')) && `${g('City')}${g('City')&&g('State')?', ':''}${g('State')}`,
-          g('Notes') && `<div style="margin-top:6px">${g('Notes')}</div>`,
-          g('URL') && `<div style="margin-top:6px"><a href="${g('URL')}" target="_blank" rel="noopener">Open link</a></div>`
-        ].filter(Boolean);
-        new mapboxgl.Popup().setLngLat(ll).setHTML(lines.join('<br>')).addTo(map);
-      });
-      map.on('mouseenter', GEO_LAYER_ICONS, ()=> map.getCanvas().style.cursor='pointer');
-      map.on('mouseleave', GEO_LAYER_ICONS, ()=> map.getCanvas().style.cursor='');
+     // Popups on icon layer (pretty, with rating badge + actions)
+map.on('click', GEO_LAYER_ICONS, e=>{
+  const f   = e.features[0];
+  const p   = f.properties || {};
+  const ll  = f.geometry.coordinates;
+  const get = k => (p[k] ? String(p[k]) : '');
+
+  // Normalize fields
+  const name = get('Name') || get('name') || 'Place';
+  const type = get('Type') || '';
+  const city = get('City') || '';
+  const state= get('State') || '';
+  const url  = get('URL')  || get('Link') || '';
+
+  // Ratings (two systems)
+  const rRest  = get('Restaurant Rating');                   // Restaurants
+  const rOther = get('Activity / Accommodations Rating');    // Activity/Hike/Accommodation
+
+  // Choose which rating to show based on Type
+  const typeLower = type.toLowerCase();
+  const isRestaurant = /restaurant|food|eat/.test(typeLower);
+
+  // Badge helper
+  function badge(text, cls) {
+    return `<span class="badge ${cls}">${text}</span>`;
+  }
+
+  // Map rating -> colored badge text/class
+  function restaurantBadge(txt){
+    switch(txt){
+      case '1) Must Stop':               return badge('Must Stop','b-green');
+      case '1.5) Must Stop BUT…':        return badge('Must Stop (but…)','b-teal');
+      case '2) Go Back':                 return badge('Go Back','b-blue');
+      case '3) Good 2nd Choice':         return badge('Good 2nd Choice','b-amber');
+      case '4) Don’t Go Back':           return badge('Don’t Go Back','b-red');
+      default:                           return '';
+    }
+  }
+  function otherBadge(txt){
+    switch(txt){
+      case '1) Top Tier':                return badge('Top Tier','b-green');
+      case '2) Worth It':                return badge('Worth It','b-blue');
+      case '3) Meh':                     return badge('Meh','b-amber');
+      case '4) Not Worth It':            return badge('Not Worth It','b-red');
+      default:                           return '';
+    }
+  }
+
+  const ratingChip = isRestaurant ? restaurantBadge(rRest) : otherBadge(rOther);
+
+  // Optional info lines
+  const locLine = (city || state) ? `${city}${city && state ? ', ' : ''}${state}` : '';
+  const notes   = get('Notes');
+
+  const html = `
+    <div class="poi">
+      <div class="h">${name}</div>
+      <div class="sub">${type}${locLine ? ' · ' + locLine : ''}</div>
+      ${ratingChip ? `<div class="row">${ratingChip}</div>` : ''}
+
+      ${notes ? `<div style="font-size:12px;color:#111827;margin-top:6px">${notes}</div>` : ''}
+
+      <div class="btns">
+        <button id="poi-set-origin">Set as Origin</button>
+        <button id="poi-set-dest">Set as Destination</button>
+        ${url ? `<a href="${url}" target="_blank" rel="noopener" style="align-self:center">Website →</a>` : ''}
+      </div>
+    </div>
+  `;
+
+  const popup = new mapboxgl.Popup({
+      className: 'poi',
+      offset: 12,
+      closeButton: true,
+      closeOnClick: true,
+      maxWidth: '300px'
+    })
+    .setLngLat(ll)
+    .setHTML(html)
+    .addTo(map);
+
+  // Wire the buttons to your Directions control
+  // Uses the *displayed* coordinates from the feature
+  popup.on('open', ()=>{
+    const btnO = document.getElementById('poi-set-origin');
+    const btnD = document.getElementById('poi-set-dest');
+    if (btnO) btnO.onclick = ()=> { try{ dir.setOrigin(ll); }catch{} };
+    if (btnD) btnD.onclick = ()=> { try{ dir.setDestination(ll); }catch{} };
+  });
+});
+
+map.on('mouseenter', GEO_LAYER_ICONS, ()=> map.getCanvas().style.cursor='pointer');
+map.on('mouseleave', GEO_LAYER_ICONS, ()=> map.getCanvas().style.cursor='');
 
       // Legend (icon-based)
       const legend = document.getElementById('legend');
