@@ -461,7 +461,7 @@
       isoSrc.setData({ type:'FeatureCollection', features:[currentIsoFeature] });
 
       applyIsoFilter(currentIsoFeature);
-
+      clearErr();
       const bbox=turf.bbox(currentIsoFeature);
       if((fitToggle.checked || !hasFitOnce) && bbox && isFinite(bbox[0])){
         map.fitBounds([[bbox[0],bbox[1]],[bbox[2],bbox[3]]],{ padding:50, duration:600 });
