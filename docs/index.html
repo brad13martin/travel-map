@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Didius Travel Map — Single shows “Location”</title>
+<title>Didius Travel Map — Identical Boxes (Destination Hidden in Single)</title>
 
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet" />
 <link href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.css" rel="stylesheet" />
@@ -27,17 +27,17 @@
   .search-row{width:100%}
   .search-row.hidden{display:none}
 
-  /* Make embedded directions control span full width */
+  /* Make embedded directions controls span full width inside panel */
   .search-row .mapboxgl-ctrl-directions{ width:100%; max-width:100% }
-  .search-row .directions-control{ box-shadow:none }
+  .search-row .directions-control{ box-shadow:none } /* inner card cleanup */
 
-  /* Single mode: hide Destination block entirely */
+  /* SINGLE mode: hide Destination field, keep look identical otherwise */
   .single-like .mapbox-directions-destination{ display:none !important; }
-  /* Optional: hide turn-by-turn + summary in single mode */
+  /* Optional: hide turn-by-turn + summary (can comment out if you want them) */
   .single-like .mapbox-directions-instructions,
   .single-like .mapbox-directions-route-summary{ display:none !important; }
 
-  .mapboxgl-ctrl-bottom-right{ margin:12px }
+  .mapboxgl-ctrl-bottom-right{ margin:12px } /* keep zoom/compass tidy */
 
   #legend{
     position:absolute;left:12px;bottom:12px;background:#fff;
@@ -145,6 +145,7 @@
   let currentIsoFeature = null;
 
   // ===== TWO IDENTICAL DIRECTIONS CONTROLS =====
+  // Single: we’ll hide destination via CSS and prevent accidental routing
   const singleDir = new MapboxDirections({
     accessToken: mapboxgl.accessToken, profile:'mapbox/driving', unit:'imperial',
     alternatives:false, controls:{ instructions:false, inputs:true, profileSwitcher:true },
@@ -153,6 +154,7 @@
   const singleEl = singleDir.onAdd(map);
   singleMount.appendChild(singleEl);
 
+  // Route: normal A→B box
   const routeDir = new MapboxDirections({
     accessToken: mapboxgl.accessToken, profile:'mapbox/driving', unit:'imperial',
     alternatives:true, controls:{ instructions:true, inputs:true, profileSwitcher:true },
@@ -161,51 +163,25 @@
   const routeEl = routeDir.onAdd(map);
   routeMount.appendChild(routeEl);
 
-  // Helper: patch Single UI to say “Location” instead of “A”
-  function patchSingleLabels(){
-    // 1) Placeholder
-    const inputs = singleMount.querySelectorAll('input[type="text"]');
-    if (inputs && inputs[0]) inputs[0].placeholder = 'Location';
-
-    // 2) Replace the small “A” badge text with “Location”
-    // Find any span/div in the single block that currently shows "A"
-    const candidates = singleMount.querySelectorAll('span,div');
-    for (const el of candidates){
-      const t = (el.textContent || '').trim();
-      if (t === 'A' && /directions|mapbox/i.test(el.className||'')){
-        el.textContent = 'Location';
-        el.style.fontSize = '12px';
-        el.style.fontWeight = '600';
-        break;
-      }
-    }
-  }
-
-  // Prevent Single from ever keeping a destination; keep UI patched
-  singleDir.on('load', patchSingleLabels);
-  singleDir.on('origin', patchSingleLabels);
-  singleDir.on('profile', patchSingleLabels);
-  singleDir.on('clear', patchSingleLabels);
-  singleDir.on('destination', ()=> {
-    try{ singleDir.setDestination(''); }catch{}
-    patchSingleLabels();
-  });
-  // Initial patch (in case events don’t fire early enough)
-  setTimeout(patchSingleLabels, 50);
-
   // Mode switcher toggles visibility
   function currentUXMode(){ return (document.querySelector('input[name="uxmode"]:checked')?.value) || 'point'; }
   function toggleBoxes(){
     const ux=currentUXMode();
     singleMount.classList.toggle('hidden', ux!=='point');
     routeMount.classList.toggle('hidden',  ux!=='route');
-    patchSingleLabels();
     maybeEnableApply();
   }
   document.querySelectorAll('input[name="uxmode"]').forEach(r=> r.addEventListener('change', toggleBoxes));
   toggleBoxes();
 
-  // Capture active route for corridor building
+  // Keep Single from auto-routing: if destination gets set somehow, clear it.
+  singleDir.on('destination', ()=> {
+    try{ singleDir.setDestination(''); }catch{}
+  });
+  // Update Apply enablement when origin typed/selected
+  singleDir.on('origin', maybeEnableApply);
+
+  // Capture active route from route box
   routeDir.on('route', e=>{
     try{
       const r=e?.route?.[0];
@@ -218,7 +194,7 @@
 
   function getSingleOriginLngLat(){
     try{
-      const o = singleDir.getOrigin();
+      const o = singleDir.getOrigin(); // { geometry: {coordinates:[lng,lat]} , ... }
       const c = o && o.geometry && o.geometry.coordinates;
       if(Array.isArray(c) && c.length===2 && isFinite(c[0]) && isFinite(c[1])) return {lng:c[0], lat:c[1]};
     }catch{}
@@ -228,7 +204,7 @@
   function getActiveRouteLine(){
     if(currentRouteLine?.coordinates?.length) return currentRouteLine;
     try{
-      const src=map.getSource('directions');
+      const src=map.getSource('directions'); // plugin source name
       const data=src && (src._data || (src.serialize && src.serialize().data));
       if(!data?.features?.length) return null;
       const all=[];
@@ -404,9 +380,8 @@
   }
   function maybeEnableApply(){
     const ux=currentUXMode();
-    const originOK = !!(ux==='point'
-      ? getSingleOriginLngLat()
-      : (routeDir.getOrigin() && routeDir.getDestination()));
+    const originOK = !!(ux==='point' ? getSingleOriginLngLat()
+                                      : (routeDir.getOrigin() && routeDir.getDestination()));
     applyBtn.disabled = !originOK;
   }
 
@@ -418,7 +393,7 @@
     try{
       if(currentUXMode()==='point'){
         const o=getSingleOriginLngLat();
-        if(!o) throw new Error('Enter a Location.');
+        if(!o) throw new Error('Enter an origin.');
         const gj=await fetchIso(o.lng,o.lat,minutes,profile);
         const feat=gj.features?.[0]; if(!feat) throw new Error('No isochrone returned.');
         currentIsoFeature=feat;
@@ -443,9 +418,9 @@
     clearErr(); currentIsoFeature=null; hasFitOnce=false;
     if(map.getSource(ISO_SOURCE_ID)) map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features:[] });
     applyIsoFilter(null);
+    // Also clear inputs for clarity
     try{ singleDir.setOrigin(''); }catch{}
     try{ routeDir.setOrigin(''); routeDir.setDestination(''); }catch{}
-    setTimeout(patchSingleLabels, 30);
     maybeEnableApply();
   });
 
@@ -453,4 +428,3 @@
 </script>
 </body>
 </html>
-
