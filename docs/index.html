@@ -31,12 +31,30 @@
   text-align:center;
   font-weight:600;
 }
-/* Floating toggles that appear when panels are hidden */
+/* Stack container for the floating toggles */
+#floatStack{
+  position:absolute; right:12px; top:12px;
+  display:flex; flex-direction:column; gap:8px;
+  z-index:7;
+}
+
+/* Floating toggle buttons (more visible color) */
 .floating-toggle{
-  position:absolute; z-index:7;
-  background:#111827; color:#fff; border:1px solid #111827;
-  border-radius:999px; padding:8px 12px; font-size:12px; cursor:pointer;
-  box-shadow:0 6px 20px rgba(0,0,0,.18);
+  background:#7c3aed;        /* purple */
+  color:#fff;
+  border:1px solid #6d28d9;  /* deeper purple edge */
+  border-radius:999px;
+  padding:10px 14px;
+  font-size:13px;
+  cursor:pointer;
+  box-shadow:0 10px 24px rgba(0,0,0,.18);
+}
+.floating-toggle:hover{ filter:brightness(1.05); }
+.floating-toggle:active{ transform:translateY(1px); }
+
+/* Remove old per-button positioning if present */
+#controlsToggle, #legendToggle{ position:static; }
+;
 }
 
 /* Positions */
@@ -176,8 +194,11 @@
 </div>
 
 <div id="map" aria-label="Interactive map"></div>
-<button id="controlsToggle" class="floating-toggle" style="display:none">Show Controls</button>
-<button id="legendToggle" class="floating-toggle" style="display:none">Show Legend</button>
+<div id="floatStack" aria-live="polite">
+  <button id="controlsToggle" class="floating-toggle" style="display:none" title="Show the top controls">Show Controls</button>
+  <button id="legendToggle" class="floating-toggle" style="display:none" title="Show the legend">Show Legend</button>
+</div>
+
 
 <!-- Hideable help box -->
 <div id="helpBox" aria-live="polite">
