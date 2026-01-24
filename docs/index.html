@@ -134,9 +134,23 @@
     <input id="fitToggle" type="checkbox" />
     Fit view to area
   </label>
+/* Make the "How This Works" button stand out */
+.pill.help-toggle{
+  background:#7c3aed;   /* violet to match the isochrone vibe */
+  color:#fff;
+  border-color:#6d28d9;
+  min-width:170px;       /* wider button */
+  text-align:center;
+  font-weight:600;
+}
+
+/* Hover, focus, active states */
+.pill.help-toggle:hover{ background:#6d28d9; }
+.pill.help-toggle:focus{ outline:2px solid #a78bfa; outline-offset:2px; }
+.pill.help-toggle:active{ background:#5b21b6; }
 
   <!-- Help pill -->
-  <button id="helpBtn" class="pill" title="How this map works">Help</button>
+  <button id="helpBtn" class="pill" title="How this map works">How To Use</button>
 
   <div class="search-wrap">
     <div id="dirMount" class="search-row single-like"></div>
