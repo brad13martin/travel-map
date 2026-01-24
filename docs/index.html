@@ -107,7 +107,7 @@
   const STYLE_URL = 'mapbox://styles/brad13martin/cmkjztnvs001u01qm6lsmeold';
   const GEO_PATH  = 'https://brad13martin.github.io/travel-map/data/places.geojson';
 
-  const GEO_SOURCE_ID='places-geo', GEO_LAYER_ID='places-geo-points';
+  const GEO_SOURCE_ID='places-geo', GEO_LAYER_ID='places-geo-points';const GEO_LAYER_ICONS = 'places-icons';
   const ISO_SOURCE_ID='iso-source', ISO_LAYER_FILL='iso-fill', ISO_LAYER_LINE='iso-line';
   const AVG_SPEED_KMH={driving:65,walking:5,cycling:18};
   const MAX_SAMPLES_HARD=60;
@@ -299,7 +299,44 @@
         id:GEO_LAYER_ID, type:'circle', source:GEO_SOURCE_ID,
         paint:{ 'circle-radius':6,'circle-color':'#2563eb','circle-stroke-color':'#fff','circle-stroke-width':1,'circle-opacity':1 }
       });
-
+const typeField        = ['get','Type'];
+const restRatingText   = ['coalesce', ['get','Restaurant Rating'], ''];
+const otherRatingText  = ['coalesce', ['get','Activity / Accommodations Rating'], ''];
+const restTypes  = ['literal',['Restaurant','Restaurants','restaurant','restaurants']];
+const isRestaurant = ['match', typeField, restTypes, true, false];
+const restColorExpr = [
+  'match', restRatingText,
+  '1) Must Stop',               '#10b981',   // green
+  '1.5) Must Stop BUT…',        '#34d399',   // light green/teal
+  '2) Go Back',                 '#0ea5e9',   // blue
+  '3) Good 2nd Choice',         '#f59e0b',   // amber
+  '4) Don’t Go Back',           '#ef4444',   // red
+  /* default */                 '#9ca3af'    // gray
+];
+const otherColorExpr = [
+  'match', otherRatingText,
+  '1) Top Tier',                '#10b981',   // green
+  '2) Worth It',                '#0ea5e9',   // blue
+  '3) Meh',                     '#f59e0b',   // amber
+  '4) Not Worth It',            '#ef4444',   // red
+  /* default */                 '#9ca3af'    // gray
+];
+map.addLayer({
+  id: GEO_LAYER_ICONS,
+  type: 'symbol',
+  source: GEO_SOURCE_ID,
+  layout: {
+    'icon-image': iconImageExpr,   // keep your existing iconImageExpr
+    'icon-size': 1,
+    'icon-allow-overlap': true
+  },
+  paint: {
+    'icon-color': iconColorExpr,
+    'icon-opacity': 1
+  }
+});
+      const iconColorExpr = ['case', isRestaurant, restColorExpr, otherColorExpr];
+      
       try { map.moveLayer(GEO_LAYER_ID); } catch {}
 
       try{
