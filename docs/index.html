@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Didius Travel Map — Point + Route (Compact UI)</title>
+<title>Didius Travel Map — Point + Route (Visible Controls)</title>
 
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet">
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.js"></script>
@@ -20,9 +20,9 @@
   html,body{height:100%;margin:0;font-family:system-ui,Inter,Arial}
   #map{height:100vh;width:100%}
 
-  /* Compact, left-aligned panel that won’t cover top-right controls */
+  /* Compact left panel */
   .panel{
-    position:absolute;z-index:3;left:12px;top:12px;background:#fff;
+    position:absolute;z-index:6;left:12px;top:12px;background:#fff;
     padding:10px 12px;border-radius:12px;border:1px solid #e5e7eb;
     box-shadow:0 6px 20px rgba(0,0,0,.12);
     display:flex;gap:8px;align-items:center;flex-wrap:wrap;
@@ -34,18 +34,35 @@
   .sep{width:1px;height:26px;background:#e5e7eb;display:inline-block;margin:0 2px}
   .stack{display:flex;flex-direction:column;gap:6px}
 
-  /* Put zoom/compass bottom-right so nothing overlaps them */
-  .mapboxgl-ctrl-bottom-right{margin:12px}
-  .mapboxgl-ctrl-top-right{margin:12px}
+  /* Ensure Mapbox controls are always above layers/legend */
+  .mapboxgl-ctrl { z-index: 5; }
+  .mapboxgl-ctrl-top-right{ margin:12px }
+  .mapboxgl-ctrl-bottom-right{ margin:12px }
+  .mapboxgl-ctrl-geocoder{ min-width:260px;font-size:12px }
+  .mapboxgl-ctrl-directions{ max-width:420px } /* avoid sprawling UI */
 
-  #legend{position:absolute;right:12px;top:12px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.12);z-index:2}
-  #err{position:absolute;left:12px;bottom:12px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.12);font-size:12px;max-width:70ch;display:none;z-index:4;white-space:pre-wrap}
-  #dbg{position:absolute;right:12px;bottom:12px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:6px 8px;font-size:12px;z-index:4}
-  button:disabled{opacity:.5;cursor:not-allowed}
+  /* Legend moved to bottom-left to avoid covering top-right */
+  #legend{
+    position:absolute;left:12px;bottom:12px;background:#fff;
+    border:1px solid #e5e7eb;border-radius:12px;padding:8px 10px;
+    box-shadow:0 6px 20px rgba(0,0,0,.12);z-index:2
+  }
 
-  /* Geocoder embedded in panel */
+  #err{
+    position:absolute;left:12px;top:calc(12px + 70px);
+    background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+    padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.12);
+    font-size:12px;max-width:70ch;display:none;z-index:7;white-space:pre-wrap
+  }
+  #dbg{
+    position:absolute;right:12px;bottom:12px;background:#fff;
+    border:1px solid #e5e7eb;border-radius:10px;padding:6px 8px;
+    font-size:12px;z-index:4
+  }
+
+  /* Geocoder placeholder inside panel */
   #geocoderBox{min-width:260px;flex:1}
-  .mapboxgl-ctrl-geocoder{min-width:260px;font-size:12px}
+  button:disabled{opacity:.5;cursor:not-allowed}
 </style>
 </head>
 <body>
@@ -98,8 +115,6 @@
 // ====== CONFIG ======
 mapboxgl.accessToken = 'pk.eyJ1IjoiYnJhZDEzbWFydGluIiwiYSI6ImNta2p6eHI5MzE4YzAzY282aXE4Mjhxc3QifQ.tkosuQGdRkfSMoRVWCakbg';
 const STYLE_URL = 'mapbox://styles/brad13martin/cmkjztnvs001u01qm6lsmeold';
-
-// Use absolute path so GitHub Pages always finds it
 const GEO_PATH  = '/travel-map/data/places.geojson';
 
 const GEO_SOURCE_ID = 'places-geo';
@@ -111,7 +126,6 @@ const ISO_LAYER_LINE = 'iso-line';
 const AVG_SPEED_KMH = { driving: 65, walking: 5, cycling: 18 };
 const MAX_SAMPLES_HARD = 60;
 
-// ====== UI refs ======
 const minsInput = document.getElementById('mins');
 const minsVal   = document.getElementById('minsVal');
 const applyBtn  = document.getElementById('applyBtn');
@@ -122,385 +136,267 @@ const errBox    = document.getElementById('err');
 const visOut    = document.getElementById('visCount');
 const pointUi   = document.getElementById('pointUi');
 
-const uxRadios   = Array.from(document.querySelectorAll('input[name="uxmode"]'));
-
-// ====== MAP ======
-const map = new mapboxgl.Map({
-  container: 'map',
-  style: STYLE_URL,
-  center: [-80, 40],
-  zoom: 5
-});
-
-// Move zoom/compass to bottom-right to avoid overlap
-map.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
-map.on('error', ev => showErr('Mapbox: ' + (ev?.error?.message || JSON.stringify(ev))));
-
-let userInteracting = false;
-let hasFitOnce = false;
-['dragstart','zoomstart','rotatestart','pitchstart'].forEach(ev =>
-  map.on(ev, () => { userInteracting = true; })
-);
-['dragend','zoomend','rotateend','pitchend'].forEach(ev =>
-  map.on(ev, () => { userInteracting = false; })
-);
-
 function showErr(msg){ errBox.style.display='block'; errBox.textContent = msg; }
 function clearErr(){ errBox.style.display='none'; errBox.textContent=''; }
 minsInput.addEventListener('input', () => minsVal.textContent = minsInput.value);
 
+// ====== MAP ======
+const map = new mapboxgl.Map({ container:'map', style:STYLE_URL, center:[-80,40], zoom:5 });
+map.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
+map.on('error', ev => showErr('Mapbox: ' + (ev?.error?.message || JSON.stringify(ev))));
+
 // ====== GEOCODER (embedded in panel) ======
 const geocoder = new MapboxGeocoder({
   accessToken: mapboxgl.accessToken,
-  mapboxgl: mapboxgl,
-  marker: false,
-  placeholder: 'Search a place (Single point)',
-  proximity: { longitude: -80, latitude: 40 }
+  mapboxgl, marker:false,
+  placeholder:'Search a place (Single point)',
+  proximity:{ longitude:-80, latitude:40 }
 });
-// Mount geocoder into our panel container
 document.getElementById('geocoderBox').appendChild(geocoder.onAdd(map));
 
-// ====== DIRECTIONS (kept in top-right; compact) ======
+// ====== DIRECTIONS (top-right) ======
 const directions = new MapboxDirections({
   accessToken: mapboxgl.accessToken,
-  profile: 'mapbox/driving',
-  unit: 'imperial',
-  alternatives: true,
-  controls: { instructions: true, inputs: true, profileSwitcher: true },
-  interactive: false,
-  draggable: false,
-  geometries: 'geojson'
+  profile:'mapbox/driving', unit:'imperial',
+  alternatives:true, controls:{ instructions:true, inputs:true, profileSwitcher:true },
+  interactive:false, draggable:false, geometries:'geojson'
 });
 map.addControl(directions, 'top-right');
 
-// Toggle panel sub-UI (search box shows only in Single point mode)
+// Toggle which sub-UI shows
 function currentUXMode(){ return (document.querySelector('input[name="uxmode"]:checked')?.value) || 'point'; }
-function updateControlVisibility(){
-  const ux = currentUXMode();
-  pointUi.style.display = ux === 'point' ? 'flex' : 'none';
-}
-uxRadios.forEach(r => r.addEventListener('change', updateControlVisibility));
+function updateControlVisibility(){ pointUi.style.display = currentUXMode()==='point' ? 'flex' : 'none'; }
+Array.from(document.querySelectorAll('input[name="uxmode"]')).forEach(r => r.addEventListener('change', updateControlVisibility));
 updateControlVisibility();
 
-// ====== DATA LAYERS ======
+// ====== DATA (unchanged): load, normalize, add layer ======
 map.on('load', async () => {
-  // Isochrone shells
-  map.addSource(ISO_SOURCE_ID, { type: 'geojson', data: { type:'FeatureCollection', features: [] } });
-  map.addLayer({ id: ISO_LAYER_FILL, type: 'fill', source: ISO_SOURCE_ID,
-    paint: { 'fill-color': '#7c3aed', 'fill-opacity': 0.18 } });
-  map.addLayer({ id: ISO_LAYER_LINE, type: 'line', source: ISO_SOURCE_ID,
-    paint: { 'line-color': '#5b21b6', 'line-width': 2.5, 'line-opacity': 0.9 } });
+  map.addSource(ISO_SOURCE_ID, { type:'geojson', data:{ type:'FeatureCollection', features:[] } });
+  map.addLayer({ id:ISO_LAYER_FILL, type:'fill', source:ISO_SOURCE_ID, paint:{ 'fill-color':'#7c3aed','fill-opacity':0.18 } });
+  map.addLayer({ id:ISO_LAYER_LINE, type:'line', source:ISO_SOURCE_ID, paint:{ 'line-color':'#5b21b6','line-width':2.5,'line-opacity':0.9 } });
+  map.moveLayer(ISO_LAYER_FILL); map.moveLayer(ISO_LAYER_LINE);
 
-  // Keep corridor under points
-  map.moveLayer(ISO_LAYER_FILL);
-  map.moveLayer(ISO_LAYER_LINE);
-
-  try {
-    const resp = await fetch(GEO_PATH, { cache: 'no-store' });
-    if (!resp.ok) throw new Error(`Fetch failed: ${resp.status} ${resp.statusText}`);
-    console.log('GeoJSON HTTP status:', resp.status);
+  try{
+    const resp = await fetch(GEO_PATH, { cache:'no-store' });
+    if(!resp.ok) throw new Error(`Fetch failed: ${resp.status} ${resp.statusText}`);
     const raw = await resp.json();
-    console.log('Loaded raw object:', raw);
 
-    // Normalize to Point features
-    let feats = [];
-    let interpretAsRows = false;
-
-    if (raw && raw.type === 'FeatureCollection' && Array.isArray(raw.features)) {
-      feats = raw.features;
-    } else if (Array.isArray(raw)) {
-      if (raw.length && raw[0] && typeof raw[0] === 'object' && ('geometry' in raw[0] || 'type' in raw[0])) {
-        feats = raw;
-      } else {
-        interpretAsRows = true;
-        feats = raw;
-      }
-    } else {
-      throw new Error('Unrecognized data format. Expected FeatureCollection or array.');
-    }
+    let feats = [], interpretAsRows = false;
+    if (raw?.type==='FeatureCollection' && Array.isArray(raw.features)) feats = raw.features;
+    else if (Array.isArray(raw)) { interpretAsRows = !(raw[0]?.geometry || raw[0]?.type); feats = raw; }
+    else throw new Error('Unrecognized data format.');
 
     const norm = [];
-    const pushPoint = (lon, lat, props) => {
+    const pushPoint = (lon,lat,props) => {
       let x = Number(lon), y = Number(lat);
-      if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
-      if (Math.abs(x) <= 90 && Math.abs(y) > 90) [x, y] = [y, x];
-      if (x < -180 || x > 180 || y < -90 || y > 90) return false;
-      norm.push({ type:'Feature', geometry:{ type:'Point', coordinates:[x, y] }, properties: props || {} });
+      if(!Number.isFinite(x)||!Number.isFinite(y)) return false;
+      if(Math.abs(x)<=90 && Math.abs(y)>90) [x,y]=[y,x];
+      if(x<-180||x>180||y<-90||y>90) return false;
+      norm.push({ type:'Feature', geometry:{ type:'Point', coordinates:[x,y] }, properties:props||{} });
       return true;
     };
 
-    if (!interpretAsRows) {
-      for (const f of feats) {
-        const props = f.properties || {};
-        if (f.geometry && f.geometry.type === 'Point' && Array.isArray(f.geometry.coordinates)) {
-          if (pushPoint(f.geometry.coordinates[0], f.geometry.coordinates[1], props)) continue;
+    if(!interpretAsRows){
+      for(const f of feats){
+        const p=f.properties||{};
+        if(f.geometry?.type==='Point' && Array.isArray(f.geometry.coordinates)){
+          if(pushPoint(f.geometry.coordinates[0], f.geometry.coordinates[1], p)) continue;
         }
-        const lat = props.Lat ?? props.lat ?? props.latitude ?? props.Latitude;
-        const lon = props.Long ?? props.long ?? props.lng ?? props.Lng ?? props.longitude ?? props.Longitude;
-        if (lat != null && lon != null) pushPoint(lon, lat, props);
+        const lat=p.Lat??p.lat??p.latitude??p.Latitude;
+        const lon=p.Long??p.long??p.lng??p.Lng??p.longitude??p.Longitude;
+        if(lat!=null && lon!=null) pushPoint(lon,lat,p);
       }
-    } else {
-      const guess = (o, keys) => { for (const k of keys) if (o[k] != null && o[k] !== '') return o[k]; return null; };
-      for (const row of feats) {
-        const lat = guess(row, ['Lat','lat','Latitude','latitude']);
-        const lon = guess(row, ['Long','long','Lng','lng','Longitude','longitude','Lon','lon']);
-        const props = { ...row };
-        if (lat != null && lon != null) {
-          if (pushPoint(lon, lat, props)) continue;
-        }
-        const coord = row.coordinates ?? row.Coordinates ?? row.coord ?? row.Coord;
-        if (typeof coord === 'string' && coord.includes(',')) {
-          const [a,b] = coord.split(',').map(s=>s.trim());
-          if (pushPoint(a,b,props)) continue;
-          if (pushPoint(b,a,props)) continue;
+    }else{
+      const guess=(o,keys)=>{ for(const k of keys) if(o[k]!=null && o[k]!=='') return o[k]; return null; };
+      for(const row of feats){
+        const lat=guess(row,['Lat','lat','Latitude','latitude']);
+        const lon=guess(row,['Long','long','Lng','lng','Longitude','longitude','Lon','lon']);
+        const props={...row};
+        if(lat!=null && lon!=null){ if(pushPoint(lon,lat,props)) continue; }
+        const coord=row.coordinates??row.Coordinates??row.coord??row.Coord;
+        if(typeof coord==='string' && coord.includes(',')){
+          const [a,b]=coord.split(',').map(s=>s.trim());
+          if(pushPoint(a,b,props)) continue;
+          if(pushPoint(b,a,props)) continue;
         }
       }
     }
 
-    if (!norm.length) throw new Error('No valid point features found in data/places.geojson.');
+    if(!norm.length) throw new Error('No valid point features found in data/places.geojson.');
 
-    const gj = { type:'FeatureCollection', features: norm };
-
-    map.addSource(GEO_SOURCE_ID, { type: 'geojson', data: gj });
+    const gj={ type:'FeatureCollection', features:norm };
+    map.addSource(GEO_SOURCE_ID, { type:'geojson', data:gj });
     map.addLayer({
-      id: GEO_LAYER_ID, type: 'circle', source: GEO_SOURCE_ID,
-      paint: {
-        'circle-radius': 6,
-        'circle-color': '#2563eb',
-        'circle-stroke-color': '#fff',
-        'circle-stroke-width': 1,
-        'circle-opacity': 1
-      }
+      id:GEO_LAYER_ID, type:'circle', source:GEO_SOURCE_ID,
+      paint:{ 'circle-radius':6,'circle-color':'#2563eb','circle-stroke-color':'#fff','circle-stroke-width':1,'circle-opacity':1 }
     });
 
-    // Fit to points initially
-    try {
-      const b = turf.bbox(gj);
-      if (b && isFinite(b[0]) && isFinite(b[2]) && b[0] !== b[2] && b[1] !== b[3]) {
-        map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 60, duration: 600 });
-      }
-    } catch {}
+    try{ const b=turf.bbox(gj); if(b&&isFinite(b[0])&&b[0]!==b[2]&&b[1]!==b[3]) map.fitBounds([[b[0],b[1]],[b[2],b[3]]],{padding:60,duration:600}); }catch{}
 
-    // Popups
-    map.on('click', GEO_LAYER_ID, e => {
-      const p = e.features[0].properties || {};
-      const ll = e.features[0].geometry.coordinates;
-      const g = k => (p[k] ? String(p[k]) : '');
-      const lines = [
-        `<strong>${g('Name') || g('name') || 'Place'}</strong>`,
+    map.on('click', GEO_LAYER_ID, e=>{
+      const p=e.features[0].properties||{};
+      const ll=e.features[0].geometry.coordinates;
+      const g=k=> (p[k]?String(p[k]):'');
+      const lines=[
+        `<strong>${g('Name')||g('name')||'Place'}</strong>`,
         g('Type') && `<div><em>${g('Type')}</em></div>`,
-        (g('City') || g('State')) && `${g('City')}${g('City')&&g('State')?', ':''}${g('State')}`,
+        (g('City')||g('State')) && `${g('City')}${g('City')&&g('State')?', ':''}${g('State')}`,
         g('Notes') && `<div style="margin-top:6px">${g('Notes')}</div>`,
         g('URL') && `<div style="margin-top:6px"><a href="${g('URL')}" target="_blank" rel="noopener">Open link</a></div>`
       ].filter(Boolean);
       new mapboxgl.Popup().setLngLat(ll).setHTML(lines.join('<br>')).addTo(map);
     });
-    map.on('mouseenter', GEO_LAYER_ID, () => map.getCanvas().style.cursor = 'pointer');
-    map.on('mouseleave', GEO_LAYER_ID, () => map.getCanvas().style.cursor = '');
+    map.on('mouseenter', GEO_LAYER_ID, ()=> map.getCanvas().style.cursor='pointer');
+    map.on('mouseleave', GEO_LAYER_ID, ()=> map.getCanvas().style.cursor='');
 
-    // Legend
     document.getElementById('legend').innerHTML = `
       <b>Legend</b><br>
       <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2563eb;margin-right:6px"></span>Place<br>
       <span style="display:inline-block;width:10px;height:10px;background:#7c3aed;margin-right:6px"></span>Reachable area
     `;
 
-    updateVisibleCount();
-    map.on('moveend', updateVisibleCount);
-
-  } catch (e) {
-    showErr('Could not load data/places.geojson or parse points. Open console for details.');
-    console.error(e);
-  }
+    updateVisibleCount(); map.on('moveend', updateVisibleCount);
+  }catch(e){ showErr('Could not load data/places.geojson or parse points.'); console.error(e); }
 });
 
-// ====== SINGLE-POINT MODE ======
-let originLngLat = null;
-let originMarker = null;
-
-function setOrigin(lnglat, fly = true){
-  originLngLat = lnglat;
-  if (!originMarker) originMarker = new mapboxgl.Marker({ color: '#ef4444' });
+// ====== POINT MODE ======
+let originLngLat=null, originMarker=null;
+function setOrigin(lnglat,fly=true){
+  originLngLat=lnglat;
+  if(!originMarker) originMarker=new mapboxgl.Marker({ color:'#ef4444' });
   originMarker.setLngLat(originLngLat).addTo(map);
-  if (fly) map.flyTo({ center: originLngLat, zoom: 12, duration: 600 });
+  if(fly) map.flyTo({ center:originLngLat, zoom:12, duration:600 });
   maybeEnableApply();
 }
-
-geocoder.on('result', (e) => {
-  const c = e?.result?.center;
-  if (Array.isArray(c) && c.length === 2) setOrigin({ lng: c[0], lat: c[1] });
-});
-map.on('click', (e) => { if (currentUXMode()==='point') setOrigin(e.lngLat, false); });
-useCenter.addEventListener('click', () => setOrigin(map.getCenter(), false));
+geocoder.on('result', e=>{ const c=e?.result?.center; if(Array.isArray(c)&&c.length===2) setOrigin({ lng:c[0], lat:c[1] }); });
+map.on('click', e=>{ if(currentUXMode()==='point') setOrigin(e.lngLat,false); });
+useCenter.addEventListener('click', ()=> setOrigin(map.getCenter(),false));
 
 // ====== ROUTE MODE ======
-let currentRouteLine = null;
-
-directions.on('route', e => {
-  try {
-    const r = e?.route?.[0];
-    if (r?.geometry?.type === 'LineString') {
-      currentRouteLine = r.geometry;
-    } else if (r?.geometry?.coordinates) {
-      currentRouteLine = { type:'LineString', coordinates: r.geometry.coordinates };
-    } else {
-      currentRouteLine = null;
-    }
-  } catch { currentRouteLine = null; }
+let currentRouteLine=null;
+directions.on('route', e=>{
+  try{
+    const r=e?.route?.[0];
+    if(r?.geometry?.type==='LineString') currentRouteLine=r.geometry;
+    else if(r?.geometry?.coordinates) currentRouteLine={ type:'LineString', coordinates:r.geometry.coordinates };
+    else currentRouteLine=null;
+  }catch{ currentRouteLine=null; }
   maybeEnableApply();
 });
-
-function getActiveRouteLine() {
-  if (currentRouteLine?.coordinates?.length) return currentRouteLine;
-  try {
-    const src = map.getSource('directions');
-    const data = src && (src._data || (src.serialize && src.serialize().data));
-    if (!data || !data.features || !data.features.length) return null;
-
-    const all = [];
-    for (const f of data.features) {
-      if (!f.geometry) continue;
-      if (f.geometry.type === 'LineString' && f.geometry.coordinates?.length > 1) {
-        all.push(...f.geometry.coordinates);
-      } else if (f.geometry.type === 'MultiLineString' && Array.isArray(f.geometry.coordinates)) {
-        for (const seg of f.geometry.coordinates) if (Array.isArray(seg) && seg.length > 1) all.push(...seg);
+function getActiveRouteLine(){
+  if(currentRouteLine?.coordinates?.length) return currentRouteLine;
+  try{
+    const src=map.getSource('directions');
+    const data=src && (src._data || (src.serialize && src.serialize().data));
+    if(!data?.features?.length) return null;
+    const all=[];
+    for(const f of data.features){
+      if(!f.geometry) continue;
+      if(f.geometry.type==='LineString' && f.geometry.coordinates?.length>1) all.push(...f.geometry.coordinates);
+      else if(f.geometry.type==='MultiLineString' && Array.isArray(f.geometry.coordinates)){
+        for(const seg of f.geometry.coordinates) if(Array.isArray(seg)&&seg.length>1) all.push(...seg);
       }
     }
-    if (all.length > 1) return { type:'LineString', coordinates: all };
-  } catch {}
+    if(all.length>1) return { type:'LineString', coordinates:all };
+  }catch{}
   return null;
 }
 
-map.on('sourcedata', e => {
-  if (e.sourceId !== 'directions' || !map.isSourceLoaded('directions')) return;
-  maybeEnableApply();
-});
-
-// ====== ISOCHRONE HELPERS ======
-async function fetchIso(lng, lat, minutes, profile){
-  const url = new URL(`https://api.mapbox.com/isochrone/v1/mapbox/${profile}/${lng},${lat}`);
-  url.searchParams.set('contours_minutes', String(minutes));
-  url.searchParams.set('polygons', 'true');
-  url.searchParams.set('denoise', '1');
-  url.searchParams.set('generalize', '10');
-  url.searchParams.set('access_token', mapboxgl.accessToken);
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`Isochrone ${res.status}: ${await res.text().catch(()=>res.statusText)}`);
+// ====== ISOCHRONE / CORRIDOR ======
+async function fetchIso(lng,lat,minutes,profile){
+  const url=new URL(`https://api.mapbox.com/isochrone/v1/mapbox/${profile}/${lng},${lat}`);
+  url.searchParams.set('contours_minutes',String(minutes));
+  url.searchParams.set('polygons','true');
+  url.searchParams.set('denoise','1');
+  url.searchParams.set('generalize','10');
+  url.searchParams.set('access_token',mapboxgl.accessToken);
+  const res=await fetch(url.toString());
+  if(!res.ok) throw new Error(`Isochrone ${res.status}: ${await res.text().catch(()=>res.statusText)}`);
   return await res.json();
 }
-
-async function buildRouteCorridor(line, minutes, profile){
-  const lineKm = turf.length(line, { units:'kilometers' });
-  if (!isFinite(lineKm) || lineKm <= 0) throw new Error('Route length is zero.');
-
-  const r_km = (AVG_SPEED_KMH[profile] || 65) * (minutes/60);
-  let spacingKm = Math.max(0.5 * r_km, 1);
-  let count = Math.ceil(lineKm / spacingKm);
-  if (count > MAX_SAMPLES_HARD) { count = MAX_SAMPLES_HARD; spacingKm = lineKm / count; }
-
-  const samples = [];
-  for (let i = 0; i <= count; i++) {
-    const d = Math.min(i * spacingKm, lineKm);
-    const pt = turf.along(line, d, { units:'kilometers' });
+async function buildRouteCorridor(line,minutes,profile){
+  const lineKm=turf.length(line,{units:'kilometers'});
+  if(!isFinite(lineKm)||lineKm<=0) throw new Error('Route length is zero.');
+  const r_km=(AVG_SPEED_KMH[profile]||65)*(minutes/60);
+  let spacingKm=Math.max(0.5*r_km,1);
+  let count=Math.ceil(lineKm/spacingKm);
+  if(count>MAX_SAMPLES_HARD){ count=MAX_SAMPLES_HARD; spacingKm=lineKm/count; }
+  const samples=[];
+  for(let i=0;i<=count;i++){
+    const d=Math.min(i*spacingKm,lineKm);
+    const pt=turf.along(line,d,{units:'kilometers'});
     samples.push(pt.geometry.coordinates);
   }
-  samples[samples.length - 1] = line.coordinates[line.coordinates.length - 1];
-
-  let unionGeom = null;
-  for (let i = 0; i < samples.length; i++) {
-    const [lng, lat] = samples[i];
-    const gj = await fetchIso(lng, lat, minutes, profile);
-    const feat = gj.features?.[0];
-    if (!feat) continue;
+  samples[samples.length-1]=line.coordinates[line.coordinates.length-1];
+  let unionGeom=null;
+  for(let i=0;i<samples.length;i++){
+    const [lng,lat]=samples[i];
+    const gj=await fetchIso(lng,lat,minutes,profile);
+    const feat=gj.features?.[0];
+    if(!feat) continue;
     unionGeom = unionGeom
-      ? turf.union({ type:'Feature', geometry: unionGeom, properties:{} }, feat)?.geometry || unionGeom
+      ? turf.union({type:'Feature',geometry:unionGeom,properties:{}}, feat)?.geometry || unionGeom
       : feat.geometry;
   }
-  if (!unionGeom) throw new Error('Failed to build isochrone corridor.');
+  if(!unionGeom) throw new Error('Failed to build isochrone corridor.');
   return unionGeom;
 }
 
-let currentIsoFeature = null;
-
+let currentIsoFeature=null;
 function applyIsoFilter(featureOrNull){
-  if (!map.getLayer(GEO_LAYER_ID)) return;
-  if (featureOrNull) {
-    const lit = ['literal', featureOrNull];
-    map.setFilter(GEO_LAYER_ID, ['all', ['within', lit]]);
-    map.setPaintProperty(GEO_LAYER_ID, 'circle-opacity', ['case', ['within', lit], 1, 0.2]);
-  } else {
-    map.setFilter(GEO_LAYER_ID, null);
-    map.setPaintProperty(GEO_LAYER_ID, 'circle-opacity', 1);
+  if(!map.getLayer(GEO_LAYER_ID)) return;
+  if(featureOrNull){
+    const lit=['literal',featureOrNull];
+    map.setFilter(GEO_LAYER_ID,['all',['within',lit]]);
+    map.setPaintProperty(GEO_LAYER_ID,'circle-opacity',['case',['within',lit],1,0.2]);
+  }else{
+    map.setFilter(GEO_LAYER_ID,null);
+    map.setPaintProperty(GEO_LAYER_ID,'circle-opacity',1);
   }
   updateVisibleCount();
 }
-
 function updateVisibleCount(){
-  try {
-    const vis = map.queryRenderedFeatures({ layers:[GEO_LAYER_ID] }).length;
-    visOut.textContent = String(vis);
-  } catch { visOut.textContent = 'n/a'; }
+  try{ visOut.textContent=String(map.queryRenderedFeatures({layers:[GEO_LAYER_ID]}).length); }
+  catch{ visOut.textContent='n/a'; }
 }
-
 function maybeEnableApply(){
-  const ux = currentUXMode();
-  if (ux === 'point') {
-    applyBtn.disabled = !originLngLat;
-  } else {
-    const line = getActiveRouteLine();
-    applyBtn.disabled = !line?.coordinates?.length;
-  }
+  if(currentUXMode()==='point') applyBtn.disabled = !originLngLat;
+  else applyBtn.disabled = !getActiveRouteLine()?.coordinates?.length;
 }
 
 // ====== APPLY/CLEAR ======
-applyBtn.addEventListener('click', async () => {
+applyBtn.addEventListener('click', async ()=>{
   clearErr();
-  const minutes = Number(minsInput.value || 15);
-  const profile = (document.querySelector('input[name="mode"]:checked')?.value || 'driving');
-  try {
-    if (currentUXMode() === 'point') {
-      if (!originLngLat) throw new Error('Pick an origin: search, click the map, or use map center.');
-      const gj = await fetchIso(originLngLat.lng, originLngLat.lat, minutes, profile);
-      const feat = gj.features?.[0];
-      if (!feat) throw new Error('No isochrone returned.');
-      currentIsoFeature = feat;
-    } else {
-      const line = getActiveRouteLine();
-      if (!line) throw new Error('Enter start and destination and wait for the route to draw.');
-      const corridorGeom = await buildRouteCorridor(line, minutes, profile);
-      currentIsoFeature = { type:'Feature', geometry:corridorGeom, properties:{} };
+  const minutes=Number(minsInput.value||15);
+  const profile=(document.querySelector('input[name="mode"]:checked')?.value||'driving');
+  try{
+    if(currentUXMode()==='point'){
+      if(!originLngLat) throw new Error('Pick an origin: search, click the map, or use map center.');
+      const gj=await fetchIso(originLngLat.lng,originLngLat.lat,minutes,profile);
+      const feat=gj.features?.[0]; if(!feat) throw new Error('No isochrone returned.');
+      currentIsoFeature=feat;
+    }else{
+      const line=getActiveRouteLine();
+      if(!line) throw new Error('Enter start and destination and wait for the route to draw.');
+      const corridorGeom=await buildRouteCorridor(line,minutes,profile);
+      currentIsoFeature={ type:'Feature', geometry:corridorGeom, properties:{} };
     }
-
-    map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features:[ currentIsoFeature ] });
+    map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features:[currentIsoFeature] });
     applyIsoFilter(currentIsoFeature);
 
-    if (!userInteracting && (fitToggle.checked || !hasFitOnce)) {
-      const bbox = turf.bbox(currentIsoFeature);
-      if (bbox && isFinite(bbox[0])) {
-        map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 50, duration: 600 });
-        hasFitOnce = true;
-      }
+    const bbox=turf.bbox(currentIsoFeature);
+    if((fitToggle.checked || !hasFitOnce) && bbox && isFinite(bbox[0])){
+      map.fitBounds([[bbox[0],bbox[1]],[bbox[2],bbox[3]]],{ padding:50, duration:600 });
+      hasFitOnce=true;
     }
-  } catch (e) {
-    showErr(e.message || String(e));
-    console.error(e);
-  }
+  }catch(e){ showErr(e.message||String(e)); console.error(e); }
 });
-
-clearBtn.addEventListener('click', () => {
-  clearErr();
-  currentIsoFeature = null;
-  if (map.getSource(ISO_SOURCE_ID)) {
-    map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features: [] });
-  }
+clearBtn.addEventListener('click', ()=>{
+  clearErr(); currentIsoFeature=null; hasFitOnce=false;
+  if(map.getSource(ISO_SOURCE_ID)) map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features:[] });
   applyIsoFilter(null);
-  hasFitOnce = false;
 });
-
-// Re-apply when minutes change and inputs are ready
-minsInput.addEventListener('change', () => {
-  if (!applyBtn.disabled) applyBtn.click();
-});
+minsInput.addEventListener('change', ()=>{ if(!applyBtn.disabled) applyBtn.click(); });
 </script>
 </body>
 </html>
