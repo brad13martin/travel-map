@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Didius Travel Map — Point + Route (Controls Fixed)</title>
+<title>Didius Travel Map — Separate Search Box</title>
 
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet" />
 <link href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.css" rel="stylesheet" />
@@ -13,31 +13,32 @@
   html,body{height:100%;margin:0;font-family:system-ui,Inter,Arial}
   #map{height:100vh;width:100%}
 
+  /* Compact settings panel (no search inside) */
   .panel{
     position:absolute;z-index:6;left:12px;top:12px;background:#fff;
     padding:10px 12px;border-radius:12px;border:1px solid #e5e7eb;
     box-shadow:0 6px 20px rgba(0,0,0,.12);
-    display:flex;gap:8px;align-items:center;flex-wrap:wrap;
-    max-width:420px
+    display:flex;gap:8px;align-items:center;flex-wrap:wrap;max-width:420px
   }
   .panel label{font-size:12px;color:#111827}
   .panel input[type="range"]{width:150px}
   .pill{border:1px solid #e5e7eb;border-radius:999px;padding:4px 10px;font-size:12px;background:#f8fafc;cursor:pointer}
   .sep{width:1px;height:26px;background:#e5e7eb;display:inline-block;margin:0 2px}
-  .stack{display:flex;flex-direction:column;gap:6px}
 
-  .mapboxgl-ctrl { z-index: 5; }
-  .mapboxgl-ctrl-top-right{ margin:12px }
-  .mapboxgl-ctrl-bottom-right{ margin:12px }
-  .mapboxgl-ctrl-geocoder{ min-width:260px;font-size:12px }
+  /* Make Mapbox controls visible and tidy */
+  .mapboxgl-ctrl { z-index:5 }
+  .mapboxgl-ctrl-top-right{ margin:12px }  /* Directions */
+  .mapboxgl-ctrl-top-left{  margin:12px }  /* Geocoder */
+  .mapboxgl-ctrl-bottom-right{ margin:12px } /* Zoom/compass */
   .mapboxgl-ctrl-directions{ max-width:420px }
+  .mapboxgl-ctrl-geocoder{ min-width:320px;font-size:12px }
 
+  /* Legend bottom-left so it never covers controls */
   #legend{
     position:absolute;left:12px;bottom:12px;background:#fff;
     border:1px solid #e5e7eb;border-radius:12px;padding:8px 10px;
     box-shadow:0 6px 20px rgba(0,0,0,.12);z-index:2
   }
-
   #err{
     position:absolute;left:12px;top:calc(12px + 70px);
     background:#fff;border:1px solid #e5e7eb;border-radius:10px;
@@ -49,13 +50,12 @@
     border:1px solid #e5e7eb;border-radius:10px;padding:6px 8px;
     font-size:12px;z-index:4
   }
-
-  #geocoderBox{min-width:260px;flex:1}
   button:disabled{opacity:.5;cursor:not-allowed}
 </style>
 </head>
 <body>
 
+<!-- Compact settings panel -->
 <div class="panel">
   <span class="pill">
     Mode:
@@ -84,13 +84,6 @@
     <input id="fitToggle" type="checkbox" />
     Fit view to area
   </label>
-
-  <span class="sep"></span>
-
-  <div class="stack" id="pointUi">
-    <div id="geocoderBox"></div>
-    <div><button id="useCenter" class="pill">Use map center</button></div>
-  </div>
 </div>
 
 <div id="map" aria-label="Interactive map"></div>
@@ -98,116 +91,106 @@
 <div id="err"></div>
 <div id="dbg">Visible points: <span id="visCount">0</span></div>
 
-<!-- Core libs first -->
+<!-- Core libs -->
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.js"></script>
 
-<!-- Plugins from Mapbox CDN -->
+<!-- Plugins -->
 <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.js"></script>
 <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-geocoder/v5.0.1/mapbox-gl-geocoder.min.js"></script>
 
-<!-- Fallbacks if Mapbox CDN is blocked or 404s -->
+<!-- Fallbacks if CDN fails -->
 <script>
-  (function ensurePlugins(){
-    function add(src){ var s=document.createElement('script'); s.src=src; s.defer=false; s.async=false; document.body.appendChild(s); }
-    if (typeof MapboxDirections === 'undefined') add('https://unpkg.com/@mapbox/mapbox-gl-directions@4.3.1/dist/mapbox-gl-directions.js');
-    if (typeof MapboxGeocoder === 'undefined') add('https://unpkg.com/@mapbox/mapbox-gl-geocoder@5.0.1/dist/mapbox-gl-geocoder.min.js');
-  })();
+(function ensurePlugins(){
+  function add(src){ var s=document.createElement('script'); s.src=src; s.defer=false; s.async=false; document.body.appendChild(s); }
+  if (typeof MapboxDirections === 'undefined') add('https://unpkg.com/@mapbox/mapbox-gl-directions@4.3.1/dist/mapbox-gl-directions.js');
+  if (typeof MapboxGeocoder === 'undefined')  add('https://unpkg.com/@mapbox/mapbox-gl-geocoder@5.0.1/dist/mapbox-gl-geocoder.min.js');
+})();
 </script>
 
-<!-- Turf -->
 <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 
-<!-- App -->
 <script>
 (async function(){
-  // Wait until plugins are present
-  async function waitFor(cond, timeout=6000){
-    const t0 = Date.now();
-    return new Promise((res,rej)=>{
-      (function check(){
-        if (cond()) return res();
-        if (Date.now()-t0 > timeout) return rej(new Error('Plugin load timeout'));
-        requestAnimationFrame(check);
-      })();
-    });
+  // Wait for plugins
+  function waitFor(cond, timeout=6000){
+    const t0=Date.now();
+    return new Promise((res,rej)=>{(function tick(){ if(cond()) return res(); if(Date.now()-t0>timeout) return rej(new Error('Plugin load timeout')); requestAnimationFrame(tick); })();});
   }
-  try {
-    await waitFor(()=> window.mapboxgl && window.MapboxDirections && window.MapboxGeocoder);
-  } catch(e) {
-    console.error(e);
-    alert('Mapbox plugins failed to load. Check network for geocoder/directions JS 404s.');
-    return;
-  }
+  try { await waitFor(()=> window.mapboxgl && window.MapboxDirections && window.MapboxGeocoder); } catch(e){ console.error(e); alert('Mapbox plugins failed to load.'); return; }
 
-  // ====== CONFIG ======
+  // ===== CONFIG =====
   mapboxgl.accessToken = 'pk.eyJ1IjoiYnJhZDEzbWFydGluIiwiYSI6ImNta2p6eHI5MzE4YzAzY282aXE4Mjhxc3QifQ.tkosuQGdRkfSMoRVWCakbg';
   const STYLE_URL = 'mapbox://styles/brad13martin/cmkjztnvs001u01qm6lsmeold';
   const GEO_PATH  = '/travel-map/data/places.geojson';
 
-  const GEO_SOURCE_ID = 'places-geo';
-  const GEO_LAYER_ID  = 'places-geo-points';
-  const ISO_SOURCE_ID = 'iso-source';
-  const ISO_LAYER_FILL = 'iso-fill';
-  const ISO_LAYER_LINE = 'iso-line';
+  const GEO_SOURCE_ID='places-geo', GEO_LAYER_ID='places-geo-points';
+  const ISO_SOURCE_ID='iso-source', ISO_LAYER_FILL='iso-fill', ISO_LAYER_LINE='iso-line';
 
-  const AVG_SPEED_KMH = { driving: 65, walking: 5, cycling: 18 };
-  const MAX_SAMPLES_HARD = 60;
+  const AVG_SPEED_KMH={driving:65,walking:5,cycling:18};
+  const MAX_SAMPLES_HARD=60;
 
-  const minsInput = document.getElementById('mins');
-  const minsVal   = document.getElementById('minsVal');
-  const applyBtn  = document.getElementById('applyBtn');
-  const clearBtn  = document.getElementById('clearIso');
-  const fitToggle = document.getElementById('fitToggle');
-  const useCenter = document.getElementById('useCenter');
-  const errBox    = document.getElementById('err');
-  const visOut    = document.getElementById('visCount');
-  const pointUi   = document.getElementById('pointUi');
+  // ===== UI refs =====
+  const minsInput=document.getElementById('mins');
+  const minsVal=document.getElementById('minsVal');
+  const applyBtn=document.getElementById('applyBtn');
+  const clearBtn=document.getElementById('clearIso');
+  const fitToggle=document.getElementById('fitToggle');
+  const errBox=document.getElementById('err');
+  const visOut=document.getElementById('visCount');
 
-  function showErr(msg){ errBox.style.display='block'; errBox.textContent = msg; }
+  function showErr(msg){ errBox.style.display='block'; errBox.textContent=msg; }
   function clearErr(){ errBox.style.display='none'; errBox.textContent=''; }
-  minsInput.addEventListener('input', () => minsVal.textContent = minsInput.value);
+  minsInput.addEventListener('input', ()=> minsVal.textContent=minsInput.value);
 
-  // ====== MAP ======
-  const map = new mapboxgl.Map({ container:'map', style:STYLE_URL, center:[-80,40], zoom:5 });
+  // ===== MAP =====
+  const map=new mapboxgl.Map({ container:'map', style:STYLE_URL, center:[-80,40], zoom:5 });
   map.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
-  map.on('error', ev => showErr('Mapbox: ' + (ev?.error?.message || JSON.stringify(ev))));
+  map.on('error', ev=> showErr('Mapbox: ' + (ev?.error?.message || JSON.stringify(ev))));
 
   let userInteracting=false, hasFitOnce=false;
-  ['dragstart','zoomstart','rotatestart','pitchstart'].forEach(ev => map.on(ev, ()=> userInteracting=true));
-  ['dragend','zoomend','rotateend','pitchend'].forEach(ev => map.on(ev, ()=> userInteracting=false));
+  ['dragstart','zoomstart','rotatestart','pitchstart'].forEach(ev=> map.on(ev,()=> userInteracting=true));
+  ['dragend','zoomend','rotateend','pitchend'].forEach(ev=> map.on(ev,()=> userInteracting=false));
 
-  // ====== GEOCODER (embedded in panel) ======
+  // ===== GEOCODER (Own box, top-left) =====
   const geocoder = new MapboxGeocoder({
     accessToken: mapboxgl.accessToken, mapboxgl, marker:false,
     placeholder:'Search a place (Single point)', proximity:{ longitude:-80, latitude:40 }
   });
-  document.getElementById('geocoderBox').appendChild(geocoder.onAdd(map));
+  map.addControl(geocoder, 'top-left'); // its own box like the route control
 
-  // ====== DIRECTIONS (top-right) ======
-  const directions = new MapboxDirections({
-    accessToken: mapboxgl.accessToken,
-    profile:'mapbox/driving', unit:'imperial',
+  // ===== DIRECTIONS (Own box, top-right) =====
+  const directions=new MapboxDirections({
+    accessToken: mapboxgl.accessToken, profile:'mapbox/driving', unit:'imperial',
     alternatives:true, controls:{ instructions:true, inputs:true, profileSwitcher:true },
     interactive:false, draggable:false, geometries:'geojson'
   });
   map.addControl(directions, 'top-right');
 
+  // Helpers to show/hide each control box based on mode
+  function geocoderEl(){ return document.querySelector('.mapboxgl-ctrl-top-left .mapboxgl-ctrl-geocoder'); }
+  function directionsEl(){ return document.querySelector('.mapboxgl-ctrl-top-right .mapboxgl-ctrl-directions'); }
   function currentUXMode(){ return (document.querySelector('input[name="uxmode"]:checked')?.value) || 'point'; }
-  function updateControlVisibility(){ document.getElementById('pointUi').style.display = currentUXMode()==='point' ? 'flex' : 'none'; }
-  Array.from(document.querySelectorAll('input[name="uxmode"]')).forEach(r => r.addEventListener('change', updateControlVisibility));
+  function updateControlVisibility(){
+    const ux=currentUXMode();
+    const g=geocoderEl(), d=directionsEl();
+    if (g) g.style.display = (ux==='point') ? 'block' : 'none';
+    if (d) d.style.display = (ux==='route') ? 'block' : 'none';
+    maybeEnableApply();
+  }
+  Array.from(document.querySelectorAll('input[name="uxmode"]')).forEach(r=> r.addEventListener('change', updateControlVisibility));
   updateControlVisibility();
 
-  // ====== DATA ======
-  map.on('load', async () => {
-    map.addSource(ISO_SOURCE_ID, { type:'geojson', data:{ type:'FeatureCollection', features:[] } });
+  // ===== DATA =====
+  map.on('load', async ()=>{
+    map.addSource(ISO_SOURCE_ID,{ type:'geojson', data:{ type:'FeatureCollection', features:[] } });
     map.addLayer({ id:ISO_LAYER_FILL, type:'fill', source:ISO_SOURCE_ID, paint:{ 'fill-color':'#7c3aed','fill-opacity':0.18 } });
     map.addLayer({ id:ISO_LAYER_LINE, type:'line', source:ISO_SOURCE_ID, paint:{ 'line-color':'#5b21b6','line-width':2.5,'line-opacity':0.9 } });
     map.moveLayer(ISO_LAYER_FILL); map.moveLayer(ISO_LAYER_LINE);
 
     try{
-      const resp = await fetch(GEO_PATH, { cache:'no-store' });
+      const resp=await fetch(GEO_PATH,{ cache:'no-store' });
       if(!resp.ok) throw new Error(`Fetch failed: ${resp.status} ${resp.statusText}`);
-      const raw = await resp.json();
+      const raw=await resp.json();
 
       let feats=[], interpretAsRows=false;
       if (raw?.type==='FeatureCollection' && Array.isArray(raw.features)) feats=raw.features;
@@ -253,14 +236,20 @@
       if(!norm.length) throw new Error('No valid point features found in data/places.geojson.');
       const gj={ type:'FeatureCollection', features:norm };
 
-      map.addSource(GEO_SOURCE_ID, { type:'geojson', data:gj });
+      map.addSource(GEO_SOURCE_ID,{ type:'geojson', data:gj });
       map.addLayer({
         id:GEO_LAYER_ID, type:'circle', source:GEO_SOURCE_ID,
         paint:{ 'circle-radius':6,'circle-color':'#2563eb','circle-stroke-color':'#fff','circle-stroke-width':1,'circle-opacity':1 }
       });
 
-      try{ const b=turf.bbox(gj); if(b&&isFinite(b[0])&&b[0]!==b[2]&&b[1]!==b[3]) map.fitBounds([[b[0],b[1]],[b[2],b[3]]],{padding:60,duration:600}); }catch{}
+      try{
+        const b=turf.bbox(gj);
+        if(b&&isFinite(b[0])&&b[0]!==b[2]&&b[1]!==b[3]){
+          map.fitBounds([[b[0],b[1]],[b[2],b[3]]],{ padding:60, duration:600 });
+        }
+      }catch{}
 
+      // Popups
       map.on('click', GEO_LAYER_ID, e=>{
         const p=e.features[0].properties||{}; const ll=e.features[0].geometry.coordinates;
         const g=k=> (p[k]?String(p[k]):'');
@@ -276,6 +265,7 @@
       map.on('mouseenter', GEO_LAYER_ID, ()=> map.getCanvas().style.cursor='pointer');
       map.on('mouseleave', GEO_LAYER_ID, ()=> map.getCanvas().style.cursor='');
 
+      // Legend
       document.getElementById('legend').innerHTML = `
         <b>Legend</b><br>
         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2563eb;margin-right:6px"></span>Place<br>
@@ -286,20 +276,22 @@
     }catch(e){ showErr('Could not load data/places.geojson or parse points.'); console.error(e); }
   });
 
-  // ====== POINT MODE ======
+  // ===== Single-point selection (via Geocoder result or map click) =====
   let originLngLat=null, originMarker=null;
-  function setOrigin(lnglat,fly=true){
+  function setOrigin(lnglat, fly=true){
     originLngLat=lnglat;
     if(!originMarker) originMarker=new mapboxgl.Marker({ color:'#ef4444' });
     originMarker.setLngLat(originLngLat).addTo(map);
     if(fly) map.flyTo({ center:originLngLat, zoom:12, duration:600 });
     maybeEnableApply();
   }
-  geocoder.on('result', e=>{ const c=e?.result?.center; if(Array.isArray(c)&&c.length===2) setOrigin({ lng:c[0], lat:c[1] }); });
+  geocoder.on('result', e=>{
+    const c=e?.result?.center;
+    if(Array.isArray(c)&&c.length===2) setOrigin({ lng:c[0], lat:c[1] });
+  });
   map.on('click', e=>{ if(currentUXMode()==='point') setOrigin(e.lngLat,false); });
-  useCenter.addEventListener('click', ()=> setOrigin(map.getCenter(),false));
 
-  // ====== ROUTE MODE ======
+  // ===== Route capture =====
   let currentRouteLine=null;
   directions.on('route', e=>{
     try{
@@ -329,7 +321,7 @@
     return null;
   }
 
-  // ====== ISOCHRONE / CORRIDOR ======
+  // ===== Isochrone helpers =====
   async function fetchIso(lng,lat,minutes,profile){
     const url=new URL(`https://api.mapbox.com/isochrone/v1/mapbox/${profile}/${lng},${lat}`);
     url.searchParams.set('contours_minutes',String(minutes));
@@ -391,14 +383,14 @@
     else applyBtn.disabled = !getActiveRouteLine()?.coordinates?.length;
   }
 
-  // ====== APPLY/CLEAR ======
+  // ===== Apply / Clear =====
   applyBtn.addEventListener('click', async ()=>{
     clearErr();
     const minutes=Number(minsInput.value||15);
     const profile=(document.querySelector('input[name="mode"]:checked')?.value||'driving');
     try{
       if(currentUXMode()==='point'){
-        if(!originLngLat) throw new Error('Pick an origin: search, click the map, or use map center.');
+        if(!originLngLat) throw new Error('Pick an origin via the search box or map click.');
         const gj=await fetchIso(originLngLat.lng,originLngLat.lat,minutes,profile);
         const feat=gj.features?.[0]; if(!feat) throw new Error('No isochrone returned.');
         currentIsoFeature=feat;
@@ -418,12 +410,12 @@
       }
     }catch(e){ showErr(e.message||String(e)); console.error(e); }
   });
+
   clearBtn.addEventListener('click', ()=>{
     clearErr(); currentIsoFeature=null; hasFitOnce=false;
     if(map.getSource(ISO_SOURCE_ID)) map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features:[] });
     applyIsoFilter(null);
   });
-  minsInput.addEventListener('change', ()=>{ if(!applyBtn.disabled) applyBtn.click(); });
 
 })();
 </script>
