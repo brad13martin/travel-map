@@ -129,7 +129,21 @@
   // ===== MAP =====
   const map=new mapboxgl.Map({ container:'map', style:STYLE_URL, center:[-80,40], zoom:5 });
   map.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
-  map.on('error', ev=> showErr('Mapbox: ' + (ev?.error?.message || JSON.stringify(ev))));
+  map.on('error', ev => {
+  const err = ev && ev.error;
+  const msg = (err && (err.message || err.toString())) || '';
+  const status = err && (err.status || err.code);
+
+  const isHttpFail = typeof status === 'number' && status >= 400;
+  const looksFatal = /network|fetch|geocode|isochrone|setData|source.*missing|layer.*not found/i.test(msg);
+
+  if (isHttpFail || looksFatal) {
+    showErr('Mapbox: ' + msg);
+  } else {
+    // benign style warning; keep it in console only
+    console.warn('Mapbox warning (suppressed):', ev);
+  }
+});
 
   let hasFitOnce=false, mapReady=false;
   let currentRouteLine=null, currentIsoFeature=null;
