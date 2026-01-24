@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Didius Travel Map — Single uses “Location”</title>
+<title>Didius Travel Map — Stable Sources</title>
 
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet" />
 <link href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.css" rel="stylesheet" />
@@ -22,16 +22,14 @@
   .panel input[type="range"]{width:180px}
   .pill{border:1px solid #e5e7eb;border-radius:999px;padding:4px 10px;font-size:12px;background:#f8fafc;cursor:pointer}
   .sep{width:1px;height:26px;background:#e5e7eb;display:inline-block;margin:0 2px}
-
   .search-wrap{width:100%;display:flex;flex-direction:column;gap:8px;margin-top:6px}
   .search-row{width:100%}
   .search-row.hidden{display:none}
   .search-row .mapboxgl-ctrl-directions{ width:100%; max-width:100% }
   .search-row .directions-control{ box-shadow:none }
 
-  /* Single: hide destination row */
+  /* Single mode: make it look identical but hide Destination row */
   .single-like .mapbox-directions-destination{ display:none !important; }
-  /* Optional: hide turn-by-turn in single */
   .single-like .mapbox-directions-instructions,
   .single-like .mapbox-directions-route-summary{ display:none !important; }
 
@@ -79,7 +77,7 @@
   </span>
 
   <button id="applyBtn" class="pill" disabled>Apply</button>
-  <button id="clearIso" class="pill">Clear</button>
+  <button id="clearIso" class="pill" disabled>Clear</button>
 
   <label class="pill" style="background:#fff">
     <input id="fitToggle" type="checkbox" />
@@ -128,20 +126,25 @@
   function clearErr(){ errBox.style.display='none'; errBox.textContent=''; }
   minsInput.addEventListener('input', ()=> minsVal.textContent=minsInput.value);
 
+  // Small helper: wait for condition
+  function waitFor(cond, timeout=8000){
+    const t0=Date.now();
+    return new Promise((res,rej)=>{(function tick(){ if(cond()) return res(); if(Date.now()-t0>timeout) return rej(new Error('Timeout')); requestAnimationFrame(tick); })();});
+  }
+
   // ===== MAP =====
   const map=new mapboxgl.Map({ container:'map', style:STYLE_URL, center:[-80,40], zoom:5 });
   map.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
   map.on('error', ev=> showErr('Mapbox: ' + (ev?.error?.message || JSON.stringify(ev))));
 
-  let userInteracting=false, hasFitOnce=false;
-  ['dragstart','zoomstart','rotatestart','pitchstart'].forEach(ev=> map.on(ev,()=> userInteracting=true));
-  ['dragend','zoomend','rotateend','pitchend'].forEach(ev=> map.on(ev,()=> userInteracting=false));
+  let hasFitOnce=false;
+  let mapReady=false;
 
   // ===== STATE =====
   let currentRouteLine = null;
   let currentIsoFeature = null;
 
-  // ===== DIRECTIONS CONTROLS (identical look) =====
+  // ===== Directions controls (identical look) =====
   const singleDir = new MapboxDirections({
     accessToken: mapboxgl.accessToken, profile:'mapbox/driving', unit:'imperial',
     alternatives:false, controls:{ instructions:false, inputs:true, profileSwitcher:true },
@@ -158,12 +161,10 @@
   const routeEl = routeDir.onAdd(map);
   routeMount.appendChild(routeEl);
 
-  // Patch Single labels to “Location”
+  // Relabel Single box “A” to “Location”
   function patchSingleLabels(){
-    // Placeholder
     const originInput = singleMount.querySelector('.mapbox-directions-origin input[type="text"]');
     if (originInput) originInput.placeholder = 'Location';
-    // Replace the badge "A" with "Location"
     const badges = singleMount.querySelectorAll('span,div');
     for (const el of badges){
       const t=(el.textContent||'').trim();
@@ -175,29 +176,13 @@
       }
     }
   }
-  singleDir.on('load', patchSingleLabels);
+  setTimeout(patchSingleLabels, 120);
   singleDir.on('origin', patchSingleLabels);
   singleDir.on('profile', patchSingleLabels);
   singleDir.on('clear', patchSingleLabels);
-  setTimeout(patchSingleLabels, 60);
-
-  // Prevent Single from holding a destination
   singleDir.on('destination', ()=> { try{ singleDir.setDestination(''); }catch{} });
 
-  // Geocode helper for single mode
-  async function geocodeQuery(q){
-    const url = new URL(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`);
-    url.searchParams.set('access_token', mapboxgl.accessToken);
-    url.searchParams.set('limit','1');
-    const r = await fetch(url.toString());
-    if(!r.ok) throw new Error(`Geocode ${r.status}`);
-    const j = await r.json();
-    const f = j.features?.[0];
-    if(!f?.center) throw new Error('No results for that location.');
-    return {lng:f.center[0], lat:f.center[1]};
-  }
-
-  // Mode switcher toggles boxes
+  // Mode switcher
   function currentUXMode(){ return (document.querySelector('input[name="uxmode"]:checked')?.value) || 'point'; }
   function toggleBoxes(){
     const ux=currentUXMode();
@@ -209,19 +194,21 @@
   document.querySelectorAll('input[name="uxmode"]').forEach(r=> r.addEventListener('change', toggleBoxes));
   toggleBoxes();
 
-  // Enable Apply based on inputs
+  // Enable Apply based on inputs + map ready
   function maybeEnableApply(){
+    if(!mapReady){ applyBtn.disabled=true; clearBtn.disabled=true; return; }
     const ux=currentUXMode();
     if (ux==='point'){
       const originInput = singleMount.querySelector('.mapbox-directions-origin input[type="text"]');
       applyBtn.disabled = !(originInput && originInput.value.trim().length>0);
+      clearBtn.disabled = false;
     }else{
       const hasO = !!routeDir.getOrigin();
       const hasD = !!routeDir.getDestination();
       applyBtn.disabled = !(hasO && hasD);
+      clearBtn.disabled = false;
     }
   }
-  // Watch typing in single origin
   document.addEventListener('input', (e)=>{
     if (currentUXMode()==='point' && e.target && e.target.closest('.mapbox-directions-origin')){
       maybeEnableApply();
@@ -229,6 +216,7 @@
   });
   routeDir.on('origin', maybeEnableApply);
   routeDir.on('destination', maybeEnableApply);
+
   routeDir.on('route', e=>{
     try{
       const r=e?.route?.[0];
@@ -239,14 +227,26 @@
     maybeEnableApply();
   });
 
-  // ===== DATA =====
-  map.on('load', async ()=>{
-    map.addSource(ISO_SOURCE_ID,{ type:'geojson', data:{ type:'FeatureCollection', features:[] } });
-    map.addLayer({ id:ISO_LAYER_FILL, type:'fill', source:ISO_SOURCE_ID, paint:{ 'fill-color':'#7c3aed','fill-opacity':0.18 } });
-    map.addLayer({ id:ISO_LAYER_LINE, type:'line', source:ISO_SOURCE_ID, paint:{ 'line-color':'#5b21b6','line-width':2.5,'line-opacity':0.9 } });
-    map.moveLayer(ISO_LAYER_FILL); map.moveLayer(ISO_LAYER_LINE);
+  // Ensure ISO source/layers exist
+  function ensureIsoLayers(){
+    if (!map.getSource(ISO_SOURCE_ID)){
+      map.addSource(ISO_SOURCE_ID,{ type:'geojson', data:{ type:'FeatureCollection', features:[] } });
+    }
+    if (!map.getLayer(ISO_LAYER_FILL)){
+      map.addLayer({ id:ISO_LAYER_FILL, type:'fill', source:ISO_SOURCE_ID, paint:{ 'fill-color':'#7c3aed','fill-opacity':0.18 } });
+    }
+    if (!map.getLayer(ISO_LAYER_LINE)){
+      map.addLayer({ id:ISO_LAYER_LINE, type:'line', source:ISO_SOURCE_ID, paint:{ 'line-color':'#5b21b6','line-width':2.5,'line-opacity':0.9 } });
+    }
+  }
 
+  // ===== DATA & initial setup =====
+  map.on('load', async ()=>{
     try{
+      // Create iso layers up-front
+      ensureIsoLayers();
+
+      // Load places
       const resp=await fetch(GEO_PATH,{ cache:'no-store' });
       if(!resp.ok) throw new Error(`Fetch failed: ${resp.status} ${resp.statusText}`);
       const raw=await resp.json();
@@ -297,17 +297,17 @@
 
       if (map.getLayer(GEO_LAYER_ID)) map.removeLayer(GEO_LAYER_ID);
       if (map.getSource(GEO_SOURCE_ID)) map.removeSource(GEO_SOURCE_ID);
+
       map.addSource(GEO_SOURCE_ID,{ type:'geojson', data:gj });
       map.addLayer({
         id:GEO_LAYER_ID, type:'circle', source:GEO_SOURCE_ID,
         paint:{ 'circle-radius':6,'circle-color':'#2563eb','circle-stroke-color':'#fff','circle-stroke-width':1,'circle-opacity':1 }
       });
-      map.setFilter(GEO_LAYER_ID, null);
 
-      // Put points ON TOP so they’re visible
+      // Put points on top
       try { map.moveLayer(GEO_LAYER_ID); } catch {}
 
-      // Fit to points once
+      // Fit to points
       try{
         const b=turf.bbox(gj);
         if(b&&isFinite(b[0])&&b[0]!==b[2]&&b[1]!==b[3]){
@@ -315,6 +315,7 @@
         }
       }catch{}
 
+      // Popups
       map.on('click', GEO_LAYER_ID, e=>{
         const p=e.features[0].properties||{}; const ll=e.features[0].geometry.coordinates;
         const g=k=> (p[k]?String(p[k]):'');
@@ -330,18 +331,42 @@
       map.on('mouseenter', GEO_LAYER_ID, ()=> map.getCanvas().style.cursor='pointer');
       map.on('mouseleave', GEO_LAYER_ID, ()=> map.getCanvas().style.cursor='');
 
-      updateVisibleCount(); map.on('moveend', updateVisibleCount);
-
+      // Legend
       document.getElementById('legend').innerHTML = `
         <b>Legend</b><br>
         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2563eb;margin-right:6px"></span>Place<br>
         <span style="display:inline-block;width:10px;height:10px;background:#7c3aed;margin-right:6px"></span>Reachable area
       `;
 
-    }catch(e){ showErr('Could not load or parse places.geojson.'); console.error(e); }
+      // Map is ready; enable controls
+      mapReady=true;
+      maybeEnableApply();
+      clearBtn.disabled=false;
+
+      // Keep a live count
+      function updateVisibleCount(){
+        try{ visOut.textContent=String(map.queryRenderedFeatures({layers:[GEO_LAYER_ID]}).length); }
+        catch{ visOut.textContent='n/a'; }
+      }
+      updateVisibleCount();
+      map.on('moveend', updateVisibleCount);
+
+    }catch(e){ showErr(e.message||String(e)); console.error(e); }
   });
 
-  // ===== Isochrone helpers =====
+  // ===== Helpers =====
+  async function geocodeQuery(q){
+    const url = new URL(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`);
+    url.searchParams.set('access_token', mapboxgl.accessToken);
+    url.searchParams.set('limit','1');
+    const r = await fetch(url.toString());
+    if(!r.ok) throw new Error(`Geocode ${r.status}`);
+    const j = await r.json();
+    const f = j.features?.[0];
+    if(!f?.center) throw new Error('No results for that location.');
+    return {lng:f.center[0], lat:f.center[1]};
+  }
+
   async function fetchIso(lng,lat,minutes,profile){
     const url=new URL(`https://api.mapbox.com/isochrone/v1/mapbox/${profile}/${lng},${lat}`);
     url.searchParams.set('contours_minutes',String(minutes));
@@ -353,6 +378,7 @@
     if(!res.ok) throw new Error(`Isochrone ${res.status}: ${await res.text().catch(()=>res.statusText)}`);
     return await res.json();
   }
+
   async function buildRouteCorridor(line,minutes,profile){
     const lineKm=turf.length(line,{units:'kilometers'});
     if(!isFinite(lineKm)||lineKm<=0) throw new Error('Route length is zero.');
@@ -381,7 +407,12 @@
     return unionGeom;
   }
 
-  // ===== Filter & counters =====
+  function ensureIsoReady(){
+    if (!map.getSource(ISO_SOURCE_ID) || !map.getLayer(ISO_LAYER_FILL) || !map.getLayer(ISO_LAYER_LINE)){
+      ensureIsoLayers();
+    }
+  }
+
   function applyIsoFilter(featureOrNull){
     if(!map.getLayer(GEO_LAYER_ID)) return;
     if(featureOrNull){
@@ -392,16 +423,16 @@
       map.setFilter(GEO_LAYER_ID,null);
       map.setPaintProperty(GEO_LAYER_ID,'circle-opacity',1);
     }
-    updateVisibleCount();
-  }
-  function updateVisibleCount(){
-    try{ visOut.textContent=String(map.queryRenderedFeatures({layers:[GEO_LAYER_ID]}).length); }
-    catch{ visOut.textContent='n/a'; }
   }
 
   // ===== Apply / Clear =====
   applyBtn.addEventListener('click', async ()=>{
     clearErr();
+    if (!mapReady){ showErr('Map is still loading.'); return; }
+
+    // make sure iso source/layers exist now
+    ensureIsoReady();
+
     const minutes=Number(minsInput.value||15);
     const profile=(document.querySelector('input[name="mode"]:checked')?.value||'driving');
 
@@ -414,30 +445,37 @@
         const feat=gj.features?.[0]; if(!feat) throw new Error('No isochrone returned.');
         currentIsoFeature=feat;
       }else{
-        const line = (function getActiveRouteLine(){
-          if(currentRouteLine?.coordinates?.length) return currentRouteLine;
+        // Gather active route
+        let line = currentRouteLine;
+        if(!line){
+          // fallback: try to read from plugin source
           try{
             const src=map.getSource('directions');
             const data=src && (src._data || (src.serialize && src.serialize().data));
-            if(!data?.features?.length) return null;
-            const all=[];
-            for(const f of data.features){
-              if(!f.geometry) continue;
-              if(f.geometry.type==='LineString' && f.geometry.coordinates?.length>1) all.push(...f.geometry.coordinates);
-              else if(f.geometry.type==='MultiLineString' && Array.isArray(f.geometry.coordinates)){
-                for(const seg of f.geometry.coordinates) if(Array.isArray(seg)&&seg.length>1) all.push(...seg);
+            if(data?.features?.length){
+              const all=[];
+              for(const f of data.features){
+                if(!f.geometry) continue;
+                if(f.geometry.type==='LineString' && f.geometry.coordinates?.length>1) all.push(...f.geometry.coordinates);
+                else if(f.geometry.type==='MultiLineString' && Array.isArray(f.geometry.coordinates)){
+                  for(const seg of f.geometry.coordinates) if(Array.isArray(seg)&&seg.length>1) all.push(...seg);
+                }
               }
+              if(all.length>1) line = { type:'LineString', coordinates:all };
             }
-            if(all.length>1) return { type:'LineString', coordinates:all };
           }catch{}
-          return null;
-        })();
+        }
         if(!line) throw new Error('Enter start and destination and wait for the route to draw.');
+
         const corridorGeom=await buildRouteCorridor(line,minutes,profile);
         currentIsoFeature={ type:'Feature', geometry:corridorGeom, properties:{} };
       }
 
-      map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features:[currentIsoFeature] });
+      // Now set data safely
+      const isoSrc = map.getSource(ISO_SOURCE_ID);
+      if(!isoSrc) throw new Error('Isochrone source missing.');
+      isoSrc.setData({ type:'FeatureCollection', features:[currentIsoFeature] });
+
       applyIsoFilter(currentIsoFeature);
 
       const bbox=turf.bbox(currentIsoFeature);
@@ -450,11 +488,12 @@
 
   clearBtn.addEventListener('click', ()=>{
     clearErr(); currentIsoFeature=null; hasFitOnce=false;
-    if(map.getSource(ISO_SOURCE_ID)) map.getSource(ISO_SOURCE_ID).setData({ type:'FeatureCollection', features:[] });
+    ensureIsoReady();
+    const isoSrc = map.getSource(ISO_SOURCE_ID);
+    if (isoSrc) isoSrc.setData({ type:'FeatureCollection', features:[] });
     applyIsoFilter(null);
     try{ singleDir.setOrigin(''); }catch{}
     try{ routeDir.setOrigin(''); routeDir.setDestination(''); }catch{}
-    // Also clear the single input box text
     const originInput = singleMount.querySelector('.mapbox-directions-origin input[type="text"]');
     if (originInput) originInput.value='';
     maybeEnableApply();
