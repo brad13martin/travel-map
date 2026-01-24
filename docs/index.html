@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Didius Travel Map — Separate Search Box</title>
+<title>Didius Travel Map — Points Debug + Separate Search</title>
 
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet" />
 <link href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.3.1/mapbox-gl-directions.css" rel="stylesheet" />
@@ -13,10 +13,9 @@
   html,body{height:100%;margin:0;font-family:system-ui,Inter,Arial}
   #map{height:100vh;width:100%}
 
-  /* Compact settings panel (no search inside) */
   .panel{
-    position:absolute;z-index:6;left:12px;top:12px;background:#fff;
-    padding:10px 12px;border-radius:12px;border:1px solid #e5e7eb;
+    position:absolute;z-index:6;left:12px;top:90px;
+    background:#fff;padding:10px 12px;border-radius:12px;border:1px solid #e5e7eb;
     box-shadow:0 6px 20px rgba(0,0,0,.12);
     display:flex;gap:8px;align-items:center;flex-wrap:wrap;max-width:420px
   }
@@ -25,30 +24,26 @@
   .pill{border:1px solid #e5e7eb;border-radius:999px;padding:4px 10px;font-size:12px;background:#f8fafc;cursor:pointer}
   .sep{width:1px;height:26px;background:#e5e7eb;display:inline-block;margin:0 2px}
 
-  /* Make Mapbox controls visible and tidy */
-  .mapboxgl-ctrl { z-index:5 }
-  .mapboxgl-ctrl-top-right{ margin:12px }  /* Directions */
-  .mapboxgl-ctrl-top-left{  margin:12px }  /* Geocoder */
-  .mapboxgl-ctrl-bottom-right{ margin:12px } /* Zoom/compass */
+  .mapboxgl-ctrl{ z-index:7 }
+  .mapboxgl-ctrl-top-right{ margin:12px }
+  .mapboxgl-ctrl-top-left{  margin:12px }
+  .mapboxgl-ctrl-bottom-right{ margin:12px }
   .mapboxgl-ctrl-directions{ max-width:420px }
   .mapboxgl-ctrl-geocoder{ min-width:320px;font-size:12px }
 
-  /* Legend bottom-left so it never covers controls */
   #legend{
     position:absolute;left:12px;bottom:12px;background:#fff;
     border:1px solid #e5e7eb;border-radius:12px;padding:8px 10px;
     box-shadow:0 6px 20px rgba(0,0,0,.12);z-index:2
   }
   #err{
-    position:absolute;left:12px;top:calc(12px + 70px);
-    background:#fff;border:1px solid #e5e7eb;border-radius:10px;
-    padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.12);
-    font-size:12px;max-width:70ch;display:none;z-index:7;white-space:pre-wrap
+    position:absolute;left:12px;top:12px;background:#fff;border:1px solid #e5e7eb;
+    border-radius:10px;padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.12);
+    font-size:12px;max-width:70ch;display:none;z-index:8;white-space:pre-wrap
   }
   #dbg{
     position:absolute;right:12px;bottom:12px;background:#fff;
-    border:1px solid #e5e7eb;border-radius:10px;padding:6px 8px;
-    font-size:12px;z-index:4
+    border:1px solid #e5e7eb;border-radius:10px;padding:6px 8px;font-size:12px;z-index:4
   }
   button:disabled{opacity:.5;cursor:not-allowed}
 </style>
@@ -121,7 +116,10 @@
   // ===== CONFIG =====
   mapboxgl.accessToken = 'pk.eyJ1IjoiYnJhZDEzbWFydGluIiwiYSI6ImNta2p6eHI5MzE4YzAzY282aXE4Mjhxc3QifQ.tkosuQGdRkfSMoRVWCakbg';
   const STYLE_URL = 'mapbox://styles/brad13martin/cmkjztnvs001u01qm6lsmeold';
-const GEO_PATH  = 'https://brad13martin.github.io/travel-map/data/places.geojson';
+
+  // Use absolute URL to remove path ambiguity on GitHub Pages
+  const GEO_PATH  = 'https://brad13martin.github.io/travel-map/data/places.geojson';
+
   const GEO_SOURCE_ID='places-geo', GEO_LAYER_ID='places-geo-points';
   const ISO_SOURCE_ID='iso-source', ISO_LAYER_FILL='iso-fill', ISO_LAYER_LINE='iso-line';
 
@@ -150,14 +148,14 @@ const GEO_PATH  = 'https://brad13martin.github.io/travel-map/data/places.geojson
   ['dragstart','zoomstart','rotatestart','pitchstart'].forEach(ev=> map.on(ev,()=> userInteracting=true));
   ['dragend','zoomend','rotateend','pitchend'].forEach(ev=> map.on(ev,()=> userInteracting=false));
 
-  // ===== GEOCODER (Own box, top-left) =====
+  // ===== GEOCODER (top-left) =====
   const geocoder = new MapboxGeocoder({
     accessToken: mapboxgl.accessToken, mapboxgl, marker:false,
     placeholder:'Search a place (Single point)', proximity:{ longitude:-80, latitude:40 }
   });
-  map.addControl(geocoder, 'top-left'); // its own box like the route control
+  map.addControl(geocoder, 'top-left');
 
-  // ===== DIRECTIONS (Own box, top-right) =====
+  // ===== DIRECTIONS (top-right) =====
   const directions=new MapboxDirections({
     accessToken: mapboxgl.accessToken, profile:'mapbox/driving', unit:'imperial',
     alternatives:true, controls:{ instructions:true, inputs:true, profileSwitcher:true },
@@ -165,7 +163,6 @@ const GEO_PATH  = 'https://brad13martin.github.io/travel-map/data/places.geojson
   });
   map.addControl(directions, 'top-right');
 
-  // Helpers to show/hide each control box based on mode
   function geocoderEl(){ return document.querySelector('.mapboxgl-ctrl-top-left .mapboxgl-ctrl-geocoder'); }
   function directionsEl(){ return document.querySelector('.mapboxgl-ctrl-top-right .mapboxgl-ctrl-directions'); }
   function currentUXMode(){ return (document.querySelector('input[name="uxmode"]:checked')?.value) || 'point'; }
@@ -200,7 +197,7 @@ const GEO_PATH  = 'https://brad13martin.github.io/travel-map/data/places.geojson
       const pushPoint=(lon,lat,props)=>{
         let x=Number(lon), y=Number(lat);
         if(!Number.isFinite(x)||!Number.isFinite(y)) return false;
-        if(Math.abs(x)<=90 && Math.abs(y)>90) [x,y]=[y,x];
+        if(Math.abs(x)<=90 && Math.abs(y)>90) [x,y]=[y,x]; // swap if flipped
         if(x<-180||x>180||y<-90||y>90) return false;
         norm.push({ type:'Feature', geometry:{ type:'Point', coordinates:[x,y] }, properties:props||{} });
         return true;
@@ -232,21 +229,45 @@ const GEO_PATH  = 'https://brad13martin.github.io/travel-map/data/places.geojson
         }
       }
 
-      if(!norm.length) throw new Error('No valid point features found in data/places.geojson.');
+      console.log('[DATA] raw features length:',
+        (Array.isArray(raw?.features) ? raw.features.length :
+        (Array.isArray(raw) ? raw.length : 'n/a')),
+        'normalized length:', norm.length);
+
+      if(!norm.length) throw new Error('No valid point features found in places.geojson. Check Lat/Long names and that coordinates are numbers.');
+
       const gj={ type:'FeatureCollection', features:norm };
 
+      // Re-add source/layer fresh and clear any filter
+      if (map.getLayer(GEO_LAYER_ID)) map.removeLayer(GEO_LAYER_ID);
+      if (map.getSource(GEO_SOURCE_ID)) map.removeSource(GEO_SOURCE_ID);
       map.addSource(GEO_SOURCE_ID,{ type:'geojson', data:gj });
       map.addLayer({
-        id:GEO_LAYER_ID, type:'circle', source:GEO_SOURCE_ID,
-        paint:{ 'circle-radius':6,'circle-color':'#2563eb','circle-stroke-color':'#fff','circle-stroke-width':1,'circle-opacity':1 }
+        id:GEO_LAYER_ID,
+        type:'circle',
+        source:GEO_SOURCE_ID,
+        paint:{
+          'circle-radius':6,
+          'circle-color':'#2563eb',
+          'circle-stroke-color':'#fff',
+          'circle-stroke-width':1,
+          'circle-opacity':1
+        }
       });
+      map.setFilter(GEO_LAYER_ID, null);
 
+      // Move points above labels if possible
+      const layers = map.getStyle().layers || [];
+      const firstSymbol = layers.find(l => l.type === 'symbol')?.id;
+      if (firstSymbol) try { map.moveLayer(GEO_LAYER_ID, firstSymbol); } catch {}
+
+      // Fit to data
       try{
         const b=turf.bbox(gj);
         if(b&&isFinite(b[0])&&b[0]!==b[2]&&b[1]!==b[3]){
           map.fitBounds([[b[0],b[1]],[b[2],b[3]]],{ padding:60, duration:600 });
         }
-      }catch{}
+      }catch(e){ console.warn('bbox-fit failed', e); }
 
       // Popups
       map.on('click', GEO_LAYER_ID, e=>{
@@ -264,6 +285,11 @@ const GEO_PATH  = 'https://brad13martin.github.io/travel-map/data/places.geojson
       map.on('mouseenter', GEO_LAYER_ID, ()=> map.getCanvas().style.cursor='pointer');
       map.on('mouseleave', GEO_LAYER_ID, ()=> map.getCanvas().style.cursor='');
 
+      // Visible count
+      updateVisibleCount(); map.on('moveend', updateVisibleCount);
+      console.log('[DATA] Layer added. queryRenderedFeatures count:',
+        map.queryRenderedFeatures({layers:[GEO_LAYER_ID]}).length);
+
       // Legend
       document.getElementById('legend').innerHTML = `
         <b>Legend</b><br>
@@ -271,11 +297,10 @@ const GEO_PATH  = 'https://brad13martin.github.io/travel-map/data/places.geojson
         <span style="display:inline-block;width:10px;height:10px;background:#7c3aed;margin-right:6px"></span>Reachable area
       `;
 
-      updateVisibleCount(); map.on('moveend', updateVisibleCount);
-    }catch(e){ showErr('Could not load data/places.geojson or parse points.'); console.error(e); }
+    }catch(e){ showErr('Could not load or parse places.geojson.'); console.error(e); }
   });
 
-  // ===== Single-point selection (via Geocoder result or map click) =====
+  // ===== Single-point selection =====
   let originLngLat=null, originMarker=null;
   function setOrigin(lnglat, fly=true){
     originLngLat=lnglat;
