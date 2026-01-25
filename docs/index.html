@@ -134,6 +134,63 @@
   }
   .floating-toggle:hover{ filter:brightness(1.05); }
   .floating-toggle:active{ transform:translateY(1px); }
+/* ===== Mobile tweaks ===== */
+@media (max-width: 820px){
+  /* Use safe area so buttons don't hug the notch or home bar */
+  .panel{
+    left: env(safe-area-inset-left, 8px);
+    right: env(safe-area-inset-right, 8px);
+    top: env(safe-area-inset-top, 8px);
+    max-width: none;
+    width: auto;
+    row-gap: 8px;
+  }
+
+  /* Make pills chunky and easy to tap */
+  .pill{ padding:10px 14px; font-size:14px; }
+  .panel label{ font-size:13px; }
+  .panel input[type="range"]{ width:140px; }
+
+  /* Directions control should never overflow screen */
+  .search-wrap{ width:100%; }
+  .search-row .mapboxgl-ctrl-directions{
+    width:100%; max-width:100%;
+  }
+
+  /* Float toggles stacked (you already stack, just pad for safe areas) */
+  #floatStack{
+    right: calc(env(safe-area-inset-right, 8px));
+    top: calc(env(safe-area-inset-top, 8px) + 56px);
+    gap: 10px;
+  }
+  .floating-toggle{ padding:12px 16px; font-size:14px; }
+
+  /* Legend & help sized for phones */
+  #legend{
+    left: env(safe-area-inset-left, 8px);
+    bottom: calc(env(safe-area-inset-bottom, 8px));
+    max-width: 88vw;
+  }
+  #helpBox{
+    right: env(safe-area-inset-right, 8px);
+    bottom: calc(env(safe-area-inset-bottom, 8px) + 64px);
+    width: min(92vw, 520px);
+    max-height: 60vh;
+    font-size: 14px;
+  }
+
+  /* Popup readability */
+  .mapboxgl-popup.poi .mapboxgl-popup-content{ padding:12px 14px; }
+  .poi .h{ font-size:16px; }
+  .poi .sub, .poi button, .poi .row{ font-size:13px; }
+}
+
+/* iOS 100vh fix: let #map follow --vh (set in JS below) */
+#map{
+  height: calc(var(--vh, 1vh) * 100);
+}
+
+  
 </style>
 </head>
 <body>
