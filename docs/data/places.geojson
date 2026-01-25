@@ -651,32 +651,7 @@
         "Loop": ""
       }
     },
-    {
-      "type": "Feature",
-      "geometry": {
-        "type": "Point",
-        "coordinates": [
-          0,
-          0
-        ]
-      },
-      "properties": {
-        "Name": "If you like hot chicken",
-        "Type": "or even just fried chicken",
-        "Tags": "I would say this is a must stop. A few people from BHam told me that this was their favorite of the 3 big name of hot/fried chicken in the area.,https://maps.app.goo.gl/78uZfsh3TbNDf22D9,,,,,,No",
-        "Restaurant Rating": "",
-        "City": "",
-        "State": "",
-        "Notes": "",
-        "URL": "",
-        "Lobster Roll Ranking": "",
-        "Activity / Accommodations Rating": "",
-        "Trail Length": "",
-        "Difficulty": "",
-        "Est. Time": "",
-        "Loop": ""
-      }
-    },
+    
     {
       "type": "Feature",
       "geometry": {
@@ -2840,8 +2815,8 @@
       "geometry": {
         "type": "Point",
         "coordinates": [
-          69.98890393,
-          29.92536005
+          51.20930001,
+          3.223007809
         ]
       },
       "properties": {
@@ -2866,8 +2841,8 @@
       "geometry": {
         "type": "Point",
         "coordinates": [
-          51.20930001,
-         3.22300780851116
+          57.41278766,
+         -6.193459288
         ]
       },
       "properties": {
