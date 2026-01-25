@@ -620,67 +620,39 @@ setLegendVisible(localStorage.getItem('legendOpen') !== '0');
             </div>
           </div>
         `;
-        const popup = new mapboxgl.Popup({
-  className:'poi',
-  offset:12,
-  closeButton:true,
-  closeOnClick:true,
-  maxWidth:'300px'
-})
-.setLngLat(ll)
-.setHTML(html)
-.addTo(map);
-
-// Switch UX mode helper
+        const popup = new mapboxgl.Popup({ className:'poi', offset:12, closeButton:true, closeOnClick:true, maxWidth:'300px' })
+          .setLngLat(ll).setHTML(html).addTo(map);
+        // Small helper: change UX mode radio and re-style the box
 function selectUX(val){
   const radio = document.querySelector(`input[name="uxmode"][value="${val}"]`);
-  if (radio && !radio.checked) radio.checked = true;
-  applySingleLook(val === 'point');
-  maybeEnableApply();
-  if (val === 'point') setTimeout(patchSingleLabels, 50);
+  if (radio && !radio.checked){
+    radio.checked = true;
+    // applySingleLook handles showing/hiding destination row
+    applySingleLook(val === 'point');
+    // keep Apply/Clear states in sync
+    maybeEnableApply();
+    // relabel the origin if we returned to single mode
+    if (val === 'point') setTimeout(patchSingleLabels, 50);
+  }
 }
 
-// Wire buttons immediately
-const root = popup.getElement();
-if (root){
+popup.on('open', ()=>{
+  const root = popup.getElement();
   const btnO = root.querySelector('#poi-set-origin');
   const btnD = root.querySelector('#poi-set-dest');
 
   if (btnO){
     btnO.addEventListener('click', (ev)=>{
-      ev.preventDefault(); ev.stopPropagation();
+      ev.preventDefault();
+      ev.stopPropagation();
       try {
-        // Set origin in the Directions control
-        dir.setOrigin({ lng: ll[0], lat: ll[1] });
-
-        // If we're in Single point mode, also populate the visible text box
-        if (document.querySelector('input[name="uxmode"]:checked')?.value === 'point'){
-          const originInput = dirMount.querySelector('.mapbox-directions-origin input[type="text"]');
-          if (originInput){
-            originInput.value = `${ll[1].toFixed(5)}, ${ll[0].toFixed(5)}`;
-            originInput.dispatchEvent(new Event('input', { bubbles:true }));
-          }
-          setTimeout(patchSingleLabels, 50);
-        }
+        // Set origin; stay in the current UX mode
+        dir.setOrigin([ll[0], ll[1]]);
+        // Nudge UI state and labels
         maybeEnableApply();
+        if (currentUXMode() === 'point') setTimeout(patchSingleLabels, 50);
       } catch(e){ console.warn('setOrigin failed', e); }
     });
-  }
-
-  if (btnD){
-    btnD.addEventListener('click', (ev)=>{
-      ev.preventDefault(); ev.stopPropagation();
-      try {
-        // Ensure Route mode so destination field exists/updates
-        selectUX('route');
-        // Set destination
-        dir.setDestination({ lng: ll[0], lat: ll[1] });
-        maybeEnableApply();
-      } catch(e){ console.warn('setDestination failed', e); }
-    });
-  }
-}
-
   }
 
   if (btnD){
