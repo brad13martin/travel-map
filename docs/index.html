@@ -622,12 +622,54 @@ setLegendVisible(localStorage.getItem('legendOpen') !== '0');
         `;
         const popup = new mapboxgl.Popup({ className:'poi', offset:12, closeButton:true, closeOnClick:true, maxWidth:'300px' })
           .setLngLat(ll).setHTML(html).addTo(map);
-        popup.on('open', ()=>{
-          const btnO = document.getElementById('poi-set-origin');
-          const btnD = document.getElementById('poi-set-dest');
-          if (btnO) btnO.onclick = ()=> { try{ dir.setOrigin(ll); }catch{} };
-          if (btnD) btnD.onclick = ()=> { try{ dir.setDestination(ll); }catch{} };
-        });
+        // Small helper: change UX mode radio and re-style the box
+function selectUX(val){
+  const radio = document.querySelector(`input[name="uxmode"][value="${val}"]`);
+  if (radio && !radio.checked){
+    radio.checked = true;
+    // applySingleLook handles showing/hiding destination row
+    applySingleLook(val === 'point');
+    // keep Apply/Clear states in sync
+    maybeEnableApply();
+    // relabel the origin if we returned to single mode
+    if (val === 'point') setTimeout(patchSingleLabels, 50);
+  }
+}
+
+popup.on('open', ()=>{
+  const root = popup.getElement();
+  const btnO = root.querySelector('#poi-set-origin');
+  const btnD = root.querySelector('#poi-set-dest');
+
+  if (btnO){
+    btnO.addEventListener('click', (ev)=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      try {
+        // Set origin; stay in the current UX mode
+        dir.setOrigin([ll[0], ll[1]]);
+        // Nudge UI state and labels
+        maybeEnableApply();
+        if (currentUXMode() === 'point') setTimeout(patchSingleLabels, 50);
+      } catch(e){ console.warn('setOrigin failed', e); }
+    });
+  }
+
+  if (btnD){
+    btnD.addEventListener('click', (ev)=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      try {
+        // Ensure we're in Route mode so destination field exists/updates
+        selectUX('route');
+        // Set destination and keep origin as-is (user can also click “Set as Origin”)
+        dir.setDestination([ll[0], ll[1]]);
+        maybeEnableApply();
+      } catch(e){ console.warn('setDestination failed', e); }
+    });
+  }
+});
+
       });
 
       map.on('mouseenter', GEO_LAYER_ICONS, ()=> map.getCanvas().style.cursor='pointer');
