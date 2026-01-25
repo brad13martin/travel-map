@@ -451,8 +451,7 @@ const defaultLegendOpen   = isSmallScreen() ? false : true;
     localStorage.setItem('legendOpen', open ? '1' : '0');
   }
   document.getElementById('panelHide').addEventListener('click', ()=> setControlsVisible(false));
-  controlsToggle.addEventListener('click', ()=> setControlsVisible(true));
-  legendToggle.addEventListener('click', ()=> setLegendVisible(true));
+  ;
   // Initial state
   setControlsVisible(storedControls !== null ? storedControls !== '0' : defaultControlsOpen);
 setLegendVisible(storedLegend   !== null ? storedLegend   !== '0' : defaultLegendOpen);;
