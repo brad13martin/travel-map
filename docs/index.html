@@ -148,8 +148,8 @@
   }
 
   /* Make pills chunky and easy to tap */
-  .pill{ padding:5px 7px; font-size:8px; }
-  .panel label{ font-size:10px; }
+  .pill{ padding:6px 8px; font-size:10px; }
+  .panel label{ font-size:12px; }
   .panel input[type="range"]{ width:140px; }
 
   /* Directions control should never overflow screen */
@@ -292,13 +292,22 @@
   const visOut=document.getElementById('visCount');
   const dirMount=document.getElementById('dirMount');
 
+  // Small screen helper
+const isSmallScreen = () => window.matchMedia('(max-width: 820px)').matches;
+
   // Toggle containers
   const panelEl = document.querySelector('.panel');
   const panelHideBtn = document.getElementById('panelHide');
   const controlsToggle = document.getElementById('controlsToggle');
   const legendEl = document.getElementById('legend');
   const legendToggle = document.getElementById('legendToggle');
+// Initial visibility: hide by default on phones, show on desktop.
+// If the user has toggled before, respect their saved choice.
+const storedControls = localStorage.getItem('controlsOpen');
+const storedLegend   = localStorage.getItem('legendOpen');
 
+const defaultControlsOpen = isSmallScreen() ? false : true;
+const defaultLegendOpen   = isSmallScreen() ? false : true;
   // Help elements
   const helpBtn=document.getElementById('helpBtn');
   const helpBox=document.getElementById('helpBox');
@@ -445,8 +454,8 @@
   controlsToggle.addEventListener('click', ()=> setControlsVisible(true));
   legendToggle.addEventListener('click', ()=> setLegendVisible(true));
   // Initial state
-  setControlsVisible(localStorage.getItem('controlsOpen') !== '0');
-  setLegendVisible(localStorage.getItem('legendOpen') !== '0');
+  setControlsVisible(storedControls !== null ? storedControls !== '0' : defaultControlsOpen);
+setLegendVisible(storedLegend   !== null ? storedLegend   !== '0' : defaultLegendOpen);;
 
   // ===== Load data and icons =====
   map.on('load', async ()=>{
