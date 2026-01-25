@@ -683,19 +683,22 @@
       "geometry": {
         "type": "Point",
         "coordinates": [
-          0,
-          0
+          33.51563576,
+          -86.80558859
         ]
       },
       "properties": {
-        "Name": "Good atmosphere. Nice bar to sit at. Not a bad experience and if the menu looks good to you",
-        "Type": "I would go. I’m not sure I would take another trip though.,https://maps.app.goo.gl/eRsNqQvQqhbMnXYT7,,,,,,No",
-        "Tags": "",
-        "Restaurant Rating": "",
-        "City": "",
-        "State": "",
-        "Notes": "",
-        "URL": "",
+        "Name": "Helen",
+        "Type": "Restaurant",
+        "Tags": "Cocktails, Dinner",
+        "Restaurant Rating": "3) Good 2nd Choice",
+        "City": "Birmingham",
+        "State": "Alabama",
+        "Notes": ""Biscuits were incredible. If you go here, you must get these. Yukon Gold Potatoes were good. Definitely not great. A little dry. Would maybe order the potatoes again if I were craving crispy smashed potatoes.  Grilled Asparagus was decent. Wouldn’t order again. Iberico Presa was very good. Maybe a little overpriced, but I would probably order it again. Peanut Butter Pie was excellent. Definitely would get that again. 
+ 
+
+ Good atmosphere. Nice bar to sit at. Not a bad experience and if the menu looks good to you, I would go. I’m not sure I would take another trip though."",
+        "URL": "https://maps.app.goo.gl/eRsNqQvQqhbMnXYT7",
         "Lobster Roll Ranking": "",
         "Activity / Accommodations Rating": "",
         "Trail Length": "",
